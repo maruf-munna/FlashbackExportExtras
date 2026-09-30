@@ -27,7 +27,8 @@ stonecutter {
         )
         versions(
             "26.1.2",
-            "26.2"
+            "26.2",
+            "26.3"
         )
         vcsVersion = "1.21.1"
     }

@@ -126,10 +126,14 @@ public class MixinStartExportWindow {
             if (config.internalExport.videoCodec == null) {
                 config.internalExport.videoCodec = VideoCodec.H264;
             }
+            // Flashback 0.43.6+ stores the encoder by name and treats null as
+            // the codec's first encoder, so only older versions need a default.
+            //? if !flashback_encoder_name {
             if (config.internalExport.selectedVideoEncoder == null
                     || config.internalExport.selectedVideoEncoder.length == 0) {
                 config.internalExport.selectedVideoEncoder = new int[]{0};
             }
+            //?}
 
             // Force SSAA off
             config.internalExport.ssaa = false;

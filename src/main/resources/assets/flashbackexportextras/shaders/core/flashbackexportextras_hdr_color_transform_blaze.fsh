@@ -1,4 +1,12 @@
 #version 330
+#ifdef FBEE_SPIRV
+// Minecraft 26.3 compiles GLSL to SPIR-V: every interface variable needs an
+// explicit location.
+#extension GL_ARB_separate_shader_objects : require
+#define FBEE_LOCATION(n) layout(location = n)
+#else
+#define FBEE_LOCATION(n)
+#endif
 
 uniform sampler2D InSampler;
 
@@ -6,8 +14,8 @@ layout(std140) uniform HdrParameters {
     float PeakBrightness;
 };
 
-in vec2 texCoord;
-out vec4 fragColor;
+FBEE_LOCATION(0) in vec2 texCoord;
+FBEE_LOCATION(0) out vec4 fragColor;
 
 const float PQ_M1 = 2610.0 / 16384.0;
 const float PQ_M2 = 2523.0 / 32.0;

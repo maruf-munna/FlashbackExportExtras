@@ -39,11 +39,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinMinecraftShutdown {
     @Inject(method = "close", at = @At("HEAD"), remap = false)
     private void flashbackexportextras$shutdownFlashbackDialogExecutor(CallbackInfo ci) {
+        //? if <26.3 {
         try {
             AsyncFileDialogsAccessor.flashbackexportextras$getDialogThread().shutdownNow();
         } catch (Throwable t) {
             FlashbackExportExtras.LOGGER.warn("Failed to stop Flashback file-dialog executor during shutdown", t);
         }
+        //?}
         try {
             DepthCaptureState.reset();
             SceneLinearHdrCaptureState.reset();

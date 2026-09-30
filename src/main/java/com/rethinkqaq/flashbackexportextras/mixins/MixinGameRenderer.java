@@ -54,7 +54,25 @@ public class MixinGameRenderer {
     @Unique
     private boolean flashbackexportextras_cameraCaptureFailedLogged;
 
-    /*? if >=26.2 {*/
+    /*? if >=26.3 {*/
+    /*// 26.3 moved the world-depth clear (before the hand renders) into render3dHud.
+    @Redirect(method = "render3dHud",
+            at = @At(value = "INVOKE",
+                    target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"),
+            remap = false)
+    private void flashbackexportextras$redirectClearDepthTexture(CommandEncoder encoder, GpuTexture texture, double depth) {
+        flashbackexportextras$capturePendingDepthBeforeClear(encoder);
+        encoder.clearDepthTexture(texture, depth);
+    }
+
+    @Redirect(method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"),
+            remap = false)
+    private void flashbackexportextras$preserveDepthDuringGui(CommandEncoder encoder, GpuTexture texture, double depth) {
+        encoder.clearDepthTexture(texture, depth);
+    }
+    *//*?} elif >=26.2 {*/
     /*@Redirect(method = "renderLevel",
             at = @At(value = "INVOKE",
                     target = "Lcom/mojang/blaze3d/systems/CommandEncoder;clearDepthTexture(Lcom/mojang/blaze3d/textures/GpuTexture;D)V"),

@@ -191,6 +191,25 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
     }
 
     //? if >=26.2 {
+    private static void bindSampler(RenderPass pass, String name, GpuTextureView view) {
+        //? if >=26.3 {
+        pass.setUniform(name, view, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+        //?}
+        //? if <26.3 {
+        pass.bindTexture(name, view, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+        //?}
+    }
+
+    private static void setPipeline(RenderPass pass, RenderPipeline pipeline) {
+        //? if >=26.3 {
+        // 26.3 passes compiled pipelines; the cache compiles on first use.
+        pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline));
+        //?}
+        //? if <26.3 {
+        pass.setPipeline(pipeline);
+        //?}
+    }
+
     private void captureDepth26_2(CommandEncoder encoder, GpuTexture sourceTexture, GpuTextureView sourceView,
                                     int captureWidth, int captureHeight, float depthFar,
                                     long frameId, int index, boolean reversed, String source) {
@@ -207,9 +226,8 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
         try (RenderPass pass = encoder.createRenderPass(
                 () -> "Flashback Export Extras depth transform", depthCopyView,
                 java.util.Optional.empty())) {
-            pass.setPipeline(depthCopyPipeline);
-            pass.bindTexture("InDepth", sourceView,
-                    RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+            setPipeline(pass, depthCopyPipeline);
+            bindSampler(pass, "InDepth", sourceView);
             pass.setUniform("DepthParameters", depthUniformBuffer);
             pass.draw(3, 1, 0, 0);
         }
@@ -253,9 +271,8 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
             encoder.writeToBuffer(hdrUniformBuffer.slice(), parameters);
             try (RenderPass pass = encoder.createRenderPass(
                     () -> "Flashback Export Extras HDR10 colour transform", hdrCopyView, java.util.Optional.empty())) {
-                pass.setPipeline(hdrCopyPipeline);
-                pass.bindTexture("InSampler", target.getColorTextureView(),
-                        RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+                setPipeline(pass, hdrCopyPipeline);
+                bindSampler(pass, "InSampler", target.getColorTextureView());
                 pass.setUniform("HdrParameters", hdrUniformBuffer);
                 pass.draw(3, 1, 0, 0);
             }
@@ -305,9 +322,8 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
             try (RenderPass pass = encoder.createRenderPass(
                     () -> "Flashback Export Extras scene-linear HDR transform",
                     sceneLinearView, java.util.Optional.empty())) {
-                pass.setPipeline(sceneLinearPipeline);
-                pass.bindTexture("InSampler", target.getColorTextureView(),
-                        RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+                setPipeline(pass, sceneLinearPipeline);
+                bindSampler(pass, "InSampler", target.getColorTextureView());
                 pass.draw(3, 1, 0, 0);
             }
             encoder.copyTextureToBuffer(sceneLinearTexture, sceneLinearBuffers[index], 0L, () -> {}, 0);
@@ -377,6 +393,10 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
                         ColorTargetState.WRITE_ALL))
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                 .withCull(false)
+                //? if >=26.3 {
+                // Selects the SPIR-V compatible branch of the shared shaders.
+                .withShaderDefine("FBEE_SPIRV")
+                //?}
                 .build();
     }
 
@@ -480,6 +500,10 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
                         GpuFormat.R32_FLOAT, ColorTargetState.WRITE_ALL))
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                 .withCull(false)
+                //? if >=26.3 {
+                // Selects the SPIR-V compatible branch of the shared shaders.
+                .withShaderDefine("FBEE_SPIRV")
+                //?}
                 .build();
     }
 
@@ -529,6 +553,10 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
                         GpuFormat.RGBA16_FLOAT, ColorTargetState.WRITE_ALL))
                 .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                 .withCull(false)
+                //? if >=26.3 {
+                // Selects the SPIR-V compatible branch of the shared shaders.
+                .withShaderDefine("FBEE_SPIRV")
+                //?}
                 .build();
     }
 

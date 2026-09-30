@@ -21,17 +21,32 @@
  */
 package com.rethinkqaq.flashbackexportextras.mixins;
 
-import com.moulberry.flashback.exporting.AsyncFileDialogs;
+import com.rethinkqaq.flashbackexportextras.utils.Dummy;
+import me.fallenbreath.conditionalmixin.api.annotation.Condition;
+import me.fallenbreath.conditionalmixin.api.annotation.Restriction;
 import org.spongepowered.asm.mixin.Mixin;
+/*? if <26.3 {*/
+import com.moulberry.flashback.exporting.AsyncFileDialogs;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 import java.util.concurrent.ExecutorService;
+/*?}*/
 
-/** Gives the client shutdown hook access to Flashback's file-dialog executor. */
+/**
+ * Gives the client shutdown hook access to Flashback's file-dialog executor.
+ * Flashback for 26.3 no longer has that executor, so the mixin is disabled there.
+ */
+@Restriction(require = @Condition(value = "minecraft", versionPredicates = "<26.3"))
+/*? if <26.3 {*/
 @Mixin(value = AsyncFileDialogs.class, remap = false)
+/*?} else {*/
+/*@Mixin(Dummy.class)
+*//*?}*/
 public interface AsyncFileDialogsAccessor {
+    /*? if <26.3 {*/
     @Accessor("dialogThread")
     static ExecutorService flashbackexportextras$getDialogThread() {
         throw new AssertionError();
     }
+    /*?}*/
 }
