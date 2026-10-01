@@ -29,7 +29,7 @@ import org.spongepowered.asm.mixin.Mixin;
 /*import org.spongepowered.asm.mixin.gen.Accessor;
 *//*?}*/
 
-@Restriction(require = @Condition(value = "minecraft", versionPredicates = ">=26.1 <26.3"))
+@Restriction(require = @Condition(value = "minecraft", versionPredicates = ">=26.1"))
 /*? if >=26.1 {*/
 /*@Mixin(targets = "com.moulberry.flashback.exporting.ExportJob$TempFileInfo", remap = false)
 *//*?} else {*/
