@@ -2,6 +2,8 @@ import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.testing.Test
+import java.io.IOException
+import java.util.zip.ZipFile
 
 plugins {
     // Applies the correct Loom variant for the active Minecraft version.
@@ -195,7 +197,68 @@ tasks.withType<Test>().configureEach {
     useJUnitPlatform()
 }
 
+// Instance to deploy to, read from versions/<version>/gradle.properties.
+// Surrounding quotes are optional so paths with spaces can be written either way.
+val configuredInstanceDirectory = (findProperty("minecraft_instance_dir") as String?)
+    .orEmpty()
+    .trim()
+    .removeSurrounding("\"")
+    .removeSurrounding("'")
+
 tasks {
+
+    register("buildAndDeploy") {
+        group = "build"
+        description = "Builds the ${sc.current.version} jar and deploys it to that version's configured Minecraft instance."
+        dependsOn("build")
+
+        // Local copies keep the task action free of script references (configuration cache).
+        val instanceDirectory = configuredInstanceDirectory
+        val deployModId = providers.gradleProperty("mod.id").get()
+        val deployProjectName = project.name
+        val modJarFile = loomx.modJar.flatMap { it.archiveFile }
+        doLast {
+            if (instanceDirectory.isEmpty()) {
+                throw GradleException(
+                    "Set minecraft_instance_dir in versions/$deployProjectName/gradle.properties before running buildAndDeploy."
+                )
+            }
+
+            val instanceDir = File(instanceDirectory)
+            if (!instanceDir.isDirectory) {
+                throw GradleException("Minecraft instance directory does not exist: $instanceDir")
+            }
+
+            val modsDir = File(instanceDir, "mods")
+            if (!modsDir.exists() && !modsDir.mkdirs()) {
+                throw GradleException("Could not create mods directory: $modsDir")
+            }
+
+            val jarFile = modJarFile.get().asFile
+            val idPattern = Regex("\"id\"\\s*:\\s*\"${Regex.escape(deployModId)}\"")
+
+            // Remove only older jars of this mod, identified by the id in fabric.mod.json.
+            modsDir.listFiles { file -> file.isFile && file.extension == "jar" }.orEmpty().forEach { candidate ->
+                val belongsToThisMod = try {
+                    ZipFile(candidate).use { zip ->
+                        zip.getEntry("fabric.mod.json")
+                            ?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                            ?.let { idPattern.containsMatchIn(it) }
+                            ?: false
+                    }
+                } catch (ignored: IOException) {
+                    // Not a readable Fabric mod jar; leave it untouched.
+                    false
+                }
+                if (belongsToThisMod && !candidate.delete()) {
+                    throw GradleException("Could not replace existing mod jar: $candidate")
+                }
+            }
+
+            jarFile.copyTo(File(modsDir, jarFile.name), overwrite = true)
+            logger.lifecycle("Deployed ${jarFile.name} to $modsDir")
+        }
+    }
 
     register<Copy>("buildAndCollect") {
         group = "build"

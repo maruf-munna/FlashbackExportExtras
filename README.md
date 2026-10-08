@@ -17,3 +17,16 @@ English | [中文](README_zh.md)
 - Export camera paths for Blender, After Effects, and Fusion in GLB, USDA, JSON, JSX, and Lua formats.
 
 OpenEXR output is mainly intended for compositing and post-processing in Blender, After Effects, and other software. Color, depth, and camera path data are exported with matching frame numbers for per-frame alignment.
+
+## Build and deploy to an instance
+
+Set `minecraft_instance_dir` in `versions/<version>/gradle.properties` to the root folder of your Minecraft or Modrinth instance. Quotes around a path with spaces are optional. The task creates the instance's `mods` folder if needed, removes only older jars of this mod, and copies in the freshly remapped jar.
+
+```properties
+# versions/26.3/gradle.properties
+minecraft_instance_dir=C:/Users/you/AppData/Roaming/ModrinthApp/profiles/My Instance
+```
+
+```powershell
+.\gradlew.bat :26.3:buildAndDeploy
+```
