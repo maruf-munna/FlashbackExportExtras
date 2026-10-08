@@ -41,6 +41,11 @@ public final class GpuExportBackendFactory {
         backend = null;
     }
 
+    /** The first-person hand is drawn into {@code handDepthTexture}: hand pixels of the pending depth capture become the near plane. */
+    public static synchronized void captureHandDepthOnRenderThread(Object handDepthTexture) {
+        if (backend != null) backend.captureHandDepth(handDepthTexture);
+    }
+
     /** Polls completed GPU copies without creating a backend when no export used one. */
     public static synchronized void endFrameOnRenderThread() {
         if (backend != null) backend.endFrame();

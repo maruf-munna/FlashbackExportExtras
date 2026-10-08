@@ -50,6 +50,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinGameRenderer {
     /*? if >=26.2 {*/
     /*@Shadow @Final private GameRenderState gameRenderState;
+    // the depth attachment cleared right before the first-person hand (the hand is drawn into it)
+    @Unique private GpuTexture flashbackexportextras_handDepthTexture;
     *//*?}*/
     @Unique
     private boolean flashbackexportextras_cameraCaptureFailedLogged;
@@ -62,6 +64,8 @@ public class MixinGameRenderer {
             remap = false)
     private void flashbackexportextras$redirectClearDepthTexture(CommandEncoder encoder, GpuTexture texture, double depth) {
         flashbackexportextras$capturePendingDepthBeforeClear(encoder);
+        // main depth, or the 3D HUD target when post effects are on: the hand is drawn into this one
+        flashbackexportextras_handDepthTexture = texture;
         encoder.clearDepthTexture(texture, depth);
     }
 
@@ -79,6 +83,8 @@ public class MixinGameRenderer {
             remap = false)
     private void flashbackexportextras$redirectClearDepthTexture(CommandEncoder encoder, GpuTexture texture, double depth) {
         flashbackexportextras$capturePendingDepthBeforeClear(encoder);
+        // the main depth: the hand is drawn into it right after this clear
+        flashbackexportextras_handDepthTexture = texture;
         encoder.clearDepthTexture(texture, depth);
     }
 
@@ -163,6 +169,21 @@ public class MixinGameRenderer {
             }
         }
     }
+
+    /*? if >=26.2 {*/
+    /*// renderLevel has drawn the first-person hand into the depth cleared for it: the hand's pixels of this frame's
+    // depth capture become the near plane (nothing composited by depth passes the hand), then it is read back.
+    @Inject(method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+                    shift = At.Shift.AFTER),
+            remap = false)
+    private void flashbackexportextras$overlayHandDepth(CallbackInfo ci) {
+        GpuTexture hand = flashbackexportextras_handDepthTexture;
+        flashbackexportextras_handDepthTexture = null;
+        GpuExportBackendFactory.captureHandDepthOnRenderThread(hand);
+    }
+    *//*?}*/
 
     @Unique
     private void flashbackexportextras$capturePendingDepthBeforeClear(Object clearEncoder) {

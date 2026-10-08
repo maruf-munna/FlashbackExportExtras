@@ -11,7 +11,9 @@ English | [中文](README_zh.md)
 ## Features
 
 - Export depth maps.
-- Export multi-layer OpenEXR files containing color and `Depth.Z` channels.
+- Export multi-layer OpenEXR files containing color and `Depth.Z` channels. The first-person hand is the near plane
+  (0.05 m) in `Depth.Z`, so a 3D object combined by depth (Blender Z Combine) never covers the hand (Minecraft 26.2+,
+  without a shader pack).
 - Export scene-linear HDR color for OpenEXR post-processing.
 - Export HDR10 video when HDR Mod is installed.
 - Export camera paths for Blender, After Effects, and Fusion in GLB, USDA, JSON, JSX, and Lua formats.

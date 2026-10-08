@@ -11,7 +11,7 @@
 ## 功能简介
 
 - 导出深度图。
-- 导出包含颜色和 `Depth.Z` 通道的多层 OpenEXR。
+- 导出包含颜色和 `Depth.Z` 通道的多层 OpenEXR。第一人称手部在 `Depth.Z` 中为近平面（0.05 m），按深度合成（Blender Z Combine）时 3D 物体不会挡住手（Minecraft 26.2 及以上，未启用光影包时）。
 - 可导出场景线性 HDR 颜色，用于 OpenEXR 后期处理。
 - 在安装 HDR mod 时可以导出 HDR10 视频。
 - 可以用 GLB、USDA、JSON、JSX 和 Lua 格式导出摄像机路径，供 Blender、After Effects 与 Fusion 使用。
