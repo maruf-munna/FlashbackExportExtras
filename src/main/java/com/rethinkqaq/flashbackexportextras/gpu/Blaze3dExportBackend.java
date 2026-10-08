@@ -102,6 +102,16 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
     private GpuTextureView depthCopyView;
     private RenderPipeline depthCopyPipeline;
     private GpuBuffer depthUniformBuffer;
+    // The world depth of the frame sits in depthCopyTexture; its readback waits for the first-person hand
+    // (captureHandDepth after the hand is drawn, else endFrame) so hand pixels can become the near plane.
+    private boolean depthPending;
+    private int pendingDepthIndex;
+    private boolean pendingDepthReversed;
+    private boolean pendingDepthLinear;
+    private RenderPipeline handDepthPipeline;
+    private GpuBuffer handUniformBuffer;
+    private GpuTexture handSourceTexture;
+    private GpuTextureView handSourceView;
     //?}
     @Override public boolean supportsHdr() {
         //? if >=26.2 {
@@ -138,6 +148,10 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
         }
         try {
             RenderSystem.assertOnRenderThread();
+            //? if >=26.2 {
+            // a capture whose hand step never ran (no hand drawn): read it back as it is
+            finishPendingDepth(null);
+            //?}
             if (!ensureDepthBuffers(width, height)) {
                 throw new IllegalStateException("Unable to allocate depth readback buffers");
             }
@@ -179,10 +193,13 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
             //? if >=26.2 {
             encoder.submit();
             //?}
-            //?}
             writeIndex = (writeIndex + 1) % BUFFER_COUNT;
+            //?}
         } catch (RuntimeException e) {
             depthReadbackFailed = true;
+            //? if >=26.2 {
+            depthPending = false;
+            //?}
             closeDepthBuffers();
             com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.error(
                     "Blaze3D depth readback failed for frame " + frameId, e);
@@ -231,7 +248,6 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
             pass.setUniform("DepthParameters", depthUniformBuffer);
             pass.draw(3, 1, 0, 0);
         }
-        encoder.copyTextureToBuffer(depthCopyTexture, depthBuffers[index], 0L, () -> {}, 0);
         depthFrameIds[index] = frameId;
         depthNear[index] = 0.05f;
         depthFarValues[index] = depthFar;
@@ -239,7 +255,103 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
                 ? DepthCaptureState.Encoding.LINEAR_WORLD_METERS
                 : DepthCaptureState.Encoding.STANDARD_NDC;
         depthSources[index] = source;
-        depthFences[index] = encoder.createFence();
+        // read back after the hand (captureHandDepth), else at the end of the frame
+        depthPending = true;
+        pendingDepthIndex = index;
+        pendingDepthReversed = reversed;
+        pendingDepthLinear = linearize;
+    }
+
+    @Override
+    public void captureHandDepth(Object handDepthTexture) {
+        if (!depthPending) return;
+        finishPendingDepth(handDepthTexture instanceof GpuTexture texture ? texture : null);
+    }
+
+    // Reads back the pending world depth. With the hand's depth attachment (cleared to 0.0, reversed-Z far, right
+    // before the hand) every hand pixel first becomes the near plane, like Flashplus' live depth: nothing composited
+    // by depth passes in front of the hand. With an Iris shader pack the vanilla hand pass does not run (Iris draws
+    // the hand into the world depth itself), so the depth is read back as captured.
+    private void finishPendingDepth(GpuTexture handTexture) {
+        if (!depthPending) return;
+        depthPending = false;
+        int index = pendingDepthIndex;
+        long frameId = depthFrameIds[index];
+        try {
+            CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+            if (handTexture != null && pendingDepthReversed) {
+                overlayHandDepth(encoder, handTexture, pendingDepthLinear ? 0.05f : 0.0f);
+            }
+            encoder.copyTextureToBuffer(depthCopyTexture, depthBuffers[index], 0L, () -> {}, 0);
+            depthFences[index] = encoder.createFence();
+            encoder.submit();
+            writeIndex = (index + 1) % BUFFER_COUNT;
+        } catch (RuntimeException e) {
+            depthReadbackFailed = true;
+            closeDepthBuffers();
+            DepthCaptureState.failPendingCapture(e);
+            com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.error(
+                    "Blaze3D depth readback failed for frame " + frameId, e);
+        }
+    }
+
+    private void overlayHandDepth(CommandEncoder encoder, GpuTexture handTexture, float handDepth) {
+        if (handTexture.getWidth(0) != depthCopyTexture.getWidth(0)
+                || handTexture.getHeight(0) != depthCopyTexture.getHeight(0)) {
+            return;
+        }
+        ensureHandPipeline();
+        if (handSourceTexture != handTexture) {
+            if (handSourceView != null) handSourceView.close();
+            handSourceTexture = handTexture;
+            handSourceView = RenderSystem.getDevice().createTextureView(handTexture);
+        }
+        ByteBuffer parameters = ByteBuffer.allocateDirect(16).order(ByteOrder.nativeOrder());
+        parameters.putFloat(handDepth).putFloat(0.0f).putFloat(0.0f).putFloat(0.0f).flip();
+        encoder.writeToBuffer(handUniformBuffer.slice(), parameters);
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> "Flashback Export Extras hand depth", depthCopyView, java.util.Optional.empty())) {
+            setPipeline(pass, handDepthPipeline);
+            bindSampler(pass, "InDepth", handSourceView);
+            pass.setUniform("HandParameters", handUniformBuffer);
+            pass.draw(3, 1, 0, 0);
+        }
+    }
+
+    private void ensureHandPipeline() {
+        if (handDepthPipeline != null) return;
+        handUniformBuffer = RenderSystem.getDevice().createBuffer(
+                () -> "Flashback Export Extras hand depth parameters",
+                GpuBuffer.USAGE_COPY_DST | GpuBuffer.USAGE_UNIFORM, 16L);
+        handDepthPipeline = RenderPipeline.builder()
+                .withLocation(ResourceLocation.fromNamespaceAndPath(
+                        "flashbackexportextras", "depth_hand_blaze"))
+                .withVertexShader(ResourceLocation.fromNamespaceAndPath(
+                        "flashbackexportextras", "core/flashbackexportextras_depth_copy"))
+                .withFragmentShader(ResourceLocation.fromNamespaceAndPath(
+                        "flashbackexportextras", "core/flashbackexportextras_depth_hand"))
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withSampler("InDepth")
+                        .withUniform("HandParameters", UniformType.UNIFORM_BUFFER)
+                        .build())
+                .withColorTargetState(new ColorTargetState(java.util.Optional.empty(),
+                        GpuFormat.R32_FLOAT, ColorTargetState.WRITE_ALL))
+                .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
+                .withCull(false)
+                //? if >=26.3 {
+                // Selects the SPIR-V compatible branch of the shared shaders.
+                .withShaderDefine("FBEE_SPIRV")
+                //?}
+                .build();
+    }
+
+    private void closeHandResources() {
+        if (handSourceView != null) handSourceView.close();
+        if (handUniformBuffer != null) handUniformBuffer.close();
+        handSourceView = null;
+        handSourceTexture = null;
+        handUniformBuffer = null;
+        handDepthPipeline = null;
     }
     //?}
 
@@ -508,6 +620,8 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
     }
 
     private void closeDepthTarget() {
+        depthPending = false;
+        closeHandResources();
         if (depthUniformBuffer != null) depthUniformBuffer.close();
         if (depthCopyView != null) depthCopyView.close();
         if (depthCopyTexture != null) depthCopyTexture.close();
@@ -723,6 +837,10 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
     }
 
     @Override public void endFrame() {
+        //? if >=26.2 {
+        // the hand step did not run this frame (hand not drawn): read the world depth back as it is
+        finishPendingDepth(null);
+        //?}
         collectDepth();
         //? if >=26.2 {
         collectHdrReady(0L);
@@ -735,6 +853,9 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
 
     @Override
     public void flush() {
+        //? if >=26.2 {
+        finishPendingDepth(null);
+        //?}
         for (int i = 0; i < BUFFER_COUNT; i++) {
             if (depthFences[i] != null) collectDepth(i, 1_000_000_000L);
         }

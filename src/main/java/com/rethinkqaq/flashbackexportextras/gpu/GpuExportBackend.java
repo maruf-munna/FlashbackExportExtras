@@ -43,6 +43,13 @@ public interface GpuExportBackend extends AutoCloseable {
         captureDepth(target, width, height, depthFar, frameId);
     }
 
+    /**
+     * Called once the first-person hand has been drawn into {@code handDepthTexture} (the depth attachment cleared
+     * before the hand; null = unknown): hand pixels of the captured depth become the near plane, then the capture is
+     * read back. Backends that read back at the clear ignore it.
+     */
+    default void captureHandDepth(Object handDepthTexture) {}
+
     /** Queues an RGBA16 BT.2020/PQ capture for the matching export frame. */
     default void captureHdr(RenderTarget target, int width, int height,
                             float peakBrightness, long frameId) {}
