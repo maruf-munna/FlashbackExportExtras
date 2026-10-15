@@ -58,6 +58,12 @@ public class FlashbackExportExtrasConfig {
      */
     public boolean exrTranslucentLayer = true;
 
+    /**
+     * Mantissa bits kept in the EXR depth (Depth.Z / TransDepth.Z): 16 = like the Flashplus converter (0.8 mm at 100 m,
+     * about 16 % smaller files), 23 = lossless float.
+     */
+    public int exrDepthBits = 16;
+
     /** Lossless EXR compression preset selected by the user. */
     public ExrCompression exrCompression = ExrCompression.ZIP;
 

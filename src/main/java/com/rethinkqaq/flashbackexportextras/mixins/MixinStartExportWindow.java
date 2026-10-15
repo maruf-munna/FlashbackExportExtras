@@ -193,6 +193,24 @@ public class MixinStartExportWindow {
                 *///?}
             }
 
+            // Depth precision: 16 mantissa bits like the Flashplus converter (smaller), or lossless float
+            boolean depth16 = FlashbackExportExtrasConfig.INSTANCE.exrDepthBits < 23;
+            if (ImGui.beginCombo(I18n.get("flashbackexportextras.exr_depth_bits"), I18n.get(depth16
+                    ? "flashbackexportextras.exr_depth_bits_16" : "flashbackexportextras.exr_depth_bits_full"))) {
+                if (ImGui.selectable(I18n.get("flashbackexportextras.exr_depth_bits_16"), depth16)) {
+                    FlashbackExportExtrasConfig.INSTANCE.exrDepthBits = 16;
+                    FlashbackExportExtrasConfig.save();
+                }
+                if (ImGui.selectable(I18n.get("flashbackexportextras.exr_depth_bits_full"), !depth16)) {
+                    FlashbackExportExtrasConfig.INSTANCE.exrDepthBits = 23;
+                    FlashbackExportExtrasConfig.save();
+                }
+                ImGui.endCombo();
+            }
+            if (ImGui.isItemHovered()) {
+                ImGui.setTooltip(I18n.get("flashbackexportextras.exr_depth_bits_tooltip"));
+            }
+
             FlashbackExportExtrasConfig.ExrCompression compression =
                     FlashbackExportExtrasConfig.INSTANCE.getExrCompression();
             String compressionLabel = switch (compression) {

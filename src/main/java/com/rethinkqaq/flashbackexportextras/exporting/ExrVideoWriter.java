@@ -50,7 +50,7 @@ public class ExrVideoWriter implements VideoWriter {
 
     private static final int QUEUE_CAPACITY = 8;
     private static final int WRITER_COUNT = 2;
-    private static final FramePacket STOP = new FramePacket(-1, null, null, null, null, null);
+    private static final FramePacket STOP = new FramePacket(-1, null, null, null, null, null, null);
 
     private final MultiLayerExrWriter[] exrWriters;
     private final ArrayBlockingQueue<FramePacket> queue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
@@ -61,6 +61,8 @@ public class ExrVideoWriter implements VideoWriter {
     private final boolean sceneLinearHdr;
     // Export Transparent: each frame also waits for its translucent split (TranslucentCaptureState)
     private final boolean translucentLayer;
+    // the HUD as its own layer: each frame also waits for its HUD readback
+    private final boolean hudLayer;
     private volatile boolean accepting = true;
     private boolean finished;
     private long nextFrameId;
@@ -68,19 +70,21 @@ public class ExrVideoWriter implements VideoWriter {
 
     public ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,
                           ExrCompression compression) throws IOException {
-        this(outputDir, width, height, sceneLinearHdr, compression, false);
+        this(outputDir, width, height, sceneLinearHdr, compression, false, false, 23);
     }
 
     public ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,
-                          ExrCompression compression, boolean translucentLayer) throws IOException {
+                          ExrCompression compression, boolean translucentLayer, boolean hudLayer,
+                          int depthBits) throws IOException {
         this.sceneLinearHdr = sceneLinearHdr;
         this.translucentLayer = translucentLayer;
+        this.hudLayer = translucentLayer && hudLayer;
         this.exrWriters = new MultiLayerExrWriter[WRITER_COUNT];
         try {
             for (int i = 0; i < WRITER_COUNT; i++) {
                 exrWriters[i] = new MultiLayerExrWriter(outputDir, width, height,
                         FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace, sceneLinearHdr,
-                        compression, translucentLayer);
+                        compression, translucentLayer, this.hudLayer, depthBits);
             }
         } catch (IOException | RuntimeException e) {
             for (MultiLayerExrWriter writer : exrWriters) {
@@ -96,8 +100,9 @@ public class ExrVideoWriter implements VideoWriter {
             writerThread.start();
             writerThreads[i] = writerThread;
         }
-        FlashbackExportExtras.LOGGER.info("EXR writers started: output={}, workers={}, queueCapacity={}, sceneLinearHdr={}, compression={}, translucentLayer={}",
-                outputDir, WRITER_COUNT, QUEUE_CAPACITY, sceneLinearHdr, compression, translucentLayer);
+        FlashbackExportExtras.LOGGER.info("EXR writers started: output={}, workers={}, queueCapacity={}, sceneLinearHdr={}, compression={}, translucentLayer={}, hudLayer={}, depthBits={}",
+                outputDir, WRITER_COUNT, QUEUE_CAPACITY, sceneLinearHdr, compression, translucentLayer, this.hudLayer,
+                depthBits);
     }
 
     /*? if >=26.1 {*/
@@ -142,6 +147,7 @@ public class ExrVideoWriter implements VideoWriter {
             if (depthFrame == null) break;
 
             if (translucentLayer && TranslucentCaptureState.peek(nextFrameId) == null) break;
+            if (hudLayer && TranslucentCaptureState.peekHud(nextFrameId) == null) break;
 
             if (sceneLinearHdr) {
                 hdrFrame = SceneLinearHdrCaptureState.poll(nextFrameId);
@@ -151,11 +157,12 @@ public class ExrVideoWriter implements VideoWriter {
             depthFrame = DepthCaptureState.poll(nextFrameId);
             TranslucentCaptureState.TransFrame transFrame = translucentLayer
                     ? TranslucentCaptureState.poll(nextFrameId) : null;
+            TranslucentCaptureState.HudFrame hudFrame = hudLayer ? TranslucentCaptureState.pollHud(nextFrameId) : null;
             TranslucentCaptureState.CameraInfo camera = TranslucentCaptureState.takeCamera(nextFrameId);
 
             NativeImage colorImage = pendingColors.removeFirst();
             FramePacket packet = new FramePacket((int) nextFrameId++, colorImage, depthFrame,
-                    hdrFrame == null ? null : hdrFrame.data, transFrame, camera);
+                    hdrFrame == null ? null : hdrFrame.data, transFrame, hudFrame, camera);
             try {
                 if (!queue.offer(packet, 30, TimeUnit.SECONDS)) {
                     packet.close();
@@ -188,7 +195,7 @@ public class ExrVideoWriter implements VideoWriter {
                                 packet.frameId);
                     } else {
                         exrWriters[workerIndex].writeFrame(packet.color, packet.depth, packet.trans,
-                                packet.camera, packet.frameId);
+                                packet.hud, packet.camera, packet.frameId);
                     }
                 } catch (Throwable t) {
                     writerFailure.compareAndSet(null, t);
@@ -224,7 +231,8 @@ public class ExrVideoWriter implements VideoWriter {
             }
             int remainingDepth = DepthCaptureState.queuedFrameCount();
             int remainingHdr = SceneLinearHdrCaptureState.size();
-            int remainingTrans = translucentLayer ? TranslucentCaptureState.size() : 0;
+            int remainingTrans = (translucentLayer ? TranslucentCaptureState.size() : 0)
+                    + (hudLayer ? TranslucentCaptureState.hudSize() : 0);
             if (remainingDepth != 0 || (sceneLinearHdr && remainingHdr != 0) || remainingTrans != 0) {
                 writerFailure.compareAndSet(null, new IllegalStateException(
                         "Unmatched EXR data after frame " + nextFrameId
@@ -304,22 +312,25 @@ public class ExrVideoWriter implements VideoWriter {
         private final DepthCaptureState.DepthFrame depth;
         private final ByteBuffer sceneLinearHdr;
         private final TranslucentCaptureState.TransFrame trans;
+        private final TranslucentCaptureState.HudFrame hud;
         private final TranslucentCaptureState.CameraInfo camera;
 
         private FramePacket(int frameId, NativeImage color, DepthCaptureState.DepthFrame depth,
                             ByteBuffer sceneLinearHdr, TranslucentCaptureState.TransFrame trans,
-                            TranslucentCaptureState.CameraInfo camera) {
+                            TranslucentCaptureState.HudFrame hud, TranslucentCaptureState.CameraInfo camera) {
             this.frameId = frameId;
             this.color = color;
             this.depth = depth;
             this.sceneLinearHdr = sceneLinearHdr;
             this.trans = trans;
+            this.hud = hud;
             this.camera = camera;
         }
 
         private void close() {
             if (color != null) color.close();
             if (trans != null) trans.release();
+            if (hud != null) hud.release();
             if (depth != null) DepthCaptureState.releaseBuffer(depth.data);
             if (sceneLinearHdr != null) SceneLinearHdrCaptureState.release(sceneLinearHdr);
         }

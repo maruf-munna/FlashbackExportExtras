@@ -14,7 +14,10 @@
     "MixinMinecraftShutdown",
     "MixinStartExportWindow",
     "MixinFOVKeyframe",
-    "MixinLevelRendererTranslucent"
+    "MixinLevelRendererTranslucent",
+    "GuiRendererHudAccessor",
+    "MixinGuiRendererHud",
+    "MixinGlStateManagerHudBlend"
   ],
   "mixins": [
     "MixinExportJob",

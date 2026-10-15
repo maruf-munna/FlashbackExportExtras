@@ -37,6 +37,24 @@ public final class TranslucentCaptureState {
     /** This export writes Combined = solid scene, Trans and TransDepth (EXR mode + toggle + supported version). */
     public static volatile boolean active = false;
 
+    /** The HUD goes to its own UI layer (with Export Transparent, when the export draws a HUD). */
+    public static volatile boolean hudActive = false;
+
+    /** The HUD of one frame: premultiplied RGBA8 (sRGB-encoded), bottom-up; null = no HUD drawn that frame. */
+    public static final class HudFrame {
+        public final long frameId;
+        public final ByteBuffer rgba;
+
+        public HudFrame(long frameId, ByteBuffer rgba) {
+            this.frameId = frameId;
+            this.rgba = rgba;
+        }
+
+        public void release() {
+            if (rgba != null) MemoryUtil.memFree(rgba);
+        }
+    }
+
     /** One frame of the split; buffers are bottom-up (GL rows) and owned by the frame until released. */
     public static final class TransFrame {
         public final long frameId;
@@ -76,6 +94,8 @@ public final class TranslucentCaptureState {
 
     private static final FrameIndexedQueue<TransFrame> QUEUE = new FrameIndexedQueue<>(
             "translucent layer", frame -> frame.frameId, TransFrame::release);
+    private static final FrameIndexedQueue<HudFrame> HUD_QUEUE = new FrameIndexedQueue<>(
+            "HUD layer", frame -> frame.frameId, HudFrame::release);
     private static final Map<Long, CameraInfo> CAMERAS = new ConcurrentHashMap<>();
 
     private TranslucentCaptureState() {
@@ -101,6 +121,26 @@ public final class TranslucentCaptureState {
         QUEUE.fail(failure);
     }
 
+    public static void submitHud(HudFrame frame) {
+        HUD_QUEUE.submit(frame);
+    }
+
+    public static HudFrame peekHud(long frameId) {
+        return HUD_QUEUE.peek(frameId);
+    }
+
+    public static HudFrame pollHud(long frameId) {
+        return HUD_QUEUE.poll(frameId);
+    }
+
+    public static int hudSize() {
+        return HUD_QUEUE.size();
+    }
+
+    public static void failHud(Throwable failure) {
+        HUD_QUEUE.fail(failure);
+    }
+
     public static void putCamera(long frameId, CameraInfo camera) {
         CAMERAS.put(frameId, camera);
     }
@@ -111,7 +151,9 @@ public final class TranslucentCaptureState {
 
     public static void reset() {
         active = false;
+        hudActive = false;
         QUEUE.reset();
+        HUD_QUEUE.reset();
         CAMERAS.clear();
     }
 }
