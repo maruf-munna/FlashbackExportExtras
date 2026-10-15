@@ -15,6 +15,9 @@ English | [中文](README_zh.md)
   (0.05 m) in `Depth.Z`, so a 3D object combined by depth (Blender Z Combine) never covers the hand (Minecraft 26.2+,
   without a shader pack).
 - Export scene-linear HDR color for OpenEXR post-processing.
+- **Export Transparent** (Minecraft 26.3, Improved Transparency): glass, water, particles, rain and clouds in their own
+  EXR layer (`Trans` + `TransDepth`), the solid world in `Combined` / `Depth`, like a Flashplus live take; the camera of
+  every frame in the EXR header (`mc.camera.*`).
 - Export HDR10 video when HDR Mod is installed.
 - Export camera paths for Blender, After Effects, and Fusion in GLB, USDA, JSON, JSX, and Lua formats.
 

@@ -29,6 +29,12 @@ import net.fabricmc.api.ModInitializer;
 public class FlashbackExportExtras implements ModInitializer, ClientModInitializer {
     public static final String MOD_ID = "flashbackexportextras";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    /** Export Transparent (Trans / TransDepth EXR layers) needs 26.3's OIT hooks. */
+    //? if >=26.3 {
+    /*public static final boolean TRANSLUCENT_LAYER_SUPPORTED = true;
+    *///?} else {
+    public static final boolean TRANSLUCENT_LAYER_SUPPORTED = false;
+    //?}
 
     @Override public void onInitialize() { LOGGER.info("Flashback Export Extras initializing..."); }
 

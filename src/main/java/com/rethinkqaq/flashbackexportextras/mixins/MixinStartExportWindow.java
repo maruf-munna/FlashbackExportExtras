@@ -173,6 +173,26 @@ public class MixinStartExportWindow {
                 ImGui.setTooltip(I18n.get("flashbackexportextras.linearize_depth_tooltip"));
             }
 
+            // Export Transparent: glass / water / particles / clouds as their own layer (Trans + TransDepth)
+            boolean translucent = FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer;
+            if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_translucent_layer"), translucent)) {
+                FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer = !translucent;
+                FlashbackExportExtrasConfig.save();
+            }
+            if (ImGui.isItemHovered()) {
+                ImGui.setTooltip(I18n.get("flashbackexportextras.exr_translucent_layer_tooltip"));
+            }
+            if (FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer) {
+                if (!com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED) {
+                    ImGui.textColored(1.0f, 0.6f, 0.2f, 1.0f, I18n.get("flashbackexportextras.exr_translucent_layer_unsupported"));
+                }
+                //? if >=26.3 {
+                /*else if (!net.minecraft.client.Minecraft.getInstance().options.improvedTransparency().get()) {
+                    ImGui.textColored(1.0f, 0.6f, 0.2f, 1.0f, I18n.get("flashbackexportextras.exr_translucent_layer_no_oit"));
+                }
+                *///?}
+            }
+
             FlashbackExportExtrasConfig.ExrCompression compression =
                     FlashbackExportExtrasConfig.INSTANCE.getExrCompression();
             String compressionLabel = switch (compression) {
