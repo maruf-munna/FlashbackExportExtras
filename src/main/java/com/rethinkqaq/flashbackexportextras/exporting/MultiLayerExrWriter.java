@@ -69,11 +69,19 @@ public class MultiLayerExrWriter implements AutoCloseable {
         "View Layer.Trans.B",
         "View Layer.Trans.G",
         "View Layer.Trans.R",
-        "View Layer.TransDepth.Z"
+        "View Layer.TransDepth.Z",
+        "View Layer.UI.A",
+        "View Layer.UI.B",
+        "View Layer.UI.G",
+        "View Layer.UI.R"
     };
 
     private final int numChannels;
     private final boolean translucentLayer;
+    // HUD as its own premultiplied layer (UI), with Export Transparent when the export draws a HUD
+    private final boolean hudLayer;
+    // mantissa bits kept in Depth / TransDepth (23 = lossless, 16 = the converter's default: smaller files)
+    private final int depthBits;
 
     private final Path outputDir;
     private final int width;
@@ -88,6 +96,8 @@ public class MultiLayerExrWriter implements AutoCloseable {
     private final FloatBuffer rBuf, gBuf, bBuf, aBuf, zBuf;
     // translucent layer (null when Export Transparent is off)
     private final FloatBuffer trBuf, tgBuf, tbBuf, taBuf, tzBuf;
+    // HUD layer (null when off)
+    private final FloatBuffer urBuf, ugBuf, ubBuf, uaBuf;
 
     // === Pre-allocated EXR data structures ===
     private final EXRHeader header;
@@ -107,14 +117,16 @@ public class MultiLayerExrWriter implements AutoCloseable {
 
     public MultiLayerExrWriter(Path outputDir, int width, int height, boolean linearizeDepth,
                                boolean sceneLinearHdr, ExrCompression compression) throws IOException {
-        this(outputDir, width, height, linearizeDepth, sceneLinearHdr, compression, false);
+        this(outputDir, width, height, linearizeDepth, sceneLinearHdr, compression, false, false, 23);
     }
 
     public MultiLayerExrWriter(Path outputDir, int width, int height, boolean linearizeDepth,
                                boolean sceneLinearHdr, ExrCompression compression,
-                               boolean translucentLayer) throws IOException {
+                               boolean translucentLayer, boolean hudLayer, int depthBits) throws IOException {
         this.translucentLayer = translucentLayer;
-        this.numChannels = translucentLayer ? 10 : 5;
+        this.hudLayer = translucentLayer && hudLayer;
+        this.depthBits = Math.max(10, Math.min(23, depthBits));
+        this.numChannels = this.hudLayer ? 14 : translucentLayer ? 10 : 5;
         final int NUM_CHANNELS = numChannels;
         this.outputDir = outputDir;
         this.width = width;
@@ -142,6 +154,10 @@ public class MultiLayerExrWriter implements AutoCloseable {
         this.tbBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.taBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.tzBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.urBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.ugBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.ubBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.uaBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
 
         // --- Pre-allocate EXR data structures ---
         this.header = EXRHeader.calloc();
@@ -180,6 +196,12 @@ public class MultiLayerExrWriter implements AutoCloseable {
             imagePtrs.put(8, MemoryUtil.memAddress(trBuf));
             imagePtrs.put(9, MemoryUtil.memAddress(tzBuf));
         }
+        if (this.hudLayer) {
+            imagePtrs.put(10, MemoryUtil.memAddress(uaBuf));
+            imagePtrs.put(11, MemoryUtil.memAddress(ubBuf));
+            imagePtrs.put(12, MemoryUtil.memAddress(ugBuf));
+            imagePtrs.put(13, MemoryUtil.memAddress(urBuf));
+        }
         imagePtrs.flip();
 
         fixedAttributeCount = sceneLinearHdr ? 1 : 0;
@@ -210,7 +232,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
      */
     public void writeFrame(NativeImage colorImage, DepthCaptureState.DepthFrame depthFrame,
                            int frameNumber) throws IOException {
-        writeFrame(colorImage, depthFrame, null, null, frameNumber);
+        writeFrame(colorImage, depthFrame, null, null, null, frameNumber);
     }
 
     /**
@@ -219,8 +241,19 @@ public class MultiLayerExrWriter implements AutoCloseable {
      * live take. {@code camera} (may be null) goes into the header.
      */
     public void writeFrame(NativeImage colorImage, DepthCaptureState.DepthFrame depthFrame,
-                           TranslucentCaptureState.TransFrame trans, TranslucentCaptureState.CameraInfo camera,
-                           int frameNumber) throws IOException {
+                           TranslucentCaptureState.TransFrame trans, TranslucentCaptureState.HudFrame hud,
+                           TranslucentCaptureState.CameraInfo camera, int frameNumber) throws IOException {
+        if (hudLayer) {
+            // a frame without the split has Flashback's picture (HUD included) in Combined: no second HUD then
+            if (hud != null && hud.rgba != null && trans != null && trans.hasSplit()) {
+                fillRgba8BottomUp(hud.rgba, urBuf, ugBuf, ubBuf, uaBuf, false);
+            } else {
+                // no HUD drawn this frame: an empty layer, so every EXR has the same channels
+                for (FloatBuffer b : new FloatBuffer[] {urBuf, ugBuf, ubBuf, uaBuf}) {
+                    MemoryUtil.memSet(b, 0);
+                }
+            }
+        }
         frameSplit = translucentLayer && trans != null && trans.hasSplit();
         if (frameSplit) {
             fillRgba8BottomUp(trans.solid, rBuf, gBuf, bBuf, aBuf, true);
@@ -260,7 +293,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
             int dst = y * width;
             int src = (height - 1 - y) * width;
             for (int x = 0; x < width; x++, dst++, src++) {
-                tzBuf.put(dst, encodeReversedDepth(raw.get(src), trans.zNear, trans.zFar));
+                tzBuf.put(dst, quantize(encodeReversedDepth(raw.get(src), trans.zNear, trans.zFar)));
             }
         }
     }
@@ -274,8 +307,18 @@ public class MultiLayerExrWriter implements AutoCloseable {
             tgBuf.put(i, 0.0f);
             tbBuf.put(i, 0.0f);
             taBuf.put(i, 0.0f);
-            tzBuf.put(i, far);
+            tzBuf.put(i, quantize(far));
         }
+    }
+
+    /** Rounds to depthBits mantissa bits (as the converter's --depth-bits): fewer distinct bits = smaller ZIP. */
+    private float quantize(float depth) {
+        if (depthBits >= 23) {
+            return depth;
+        }
+        int drop = 23 - depthBits;
+        int bits = Float.floatToRawIntBits(depth);
+        return Float.intBitsToFloat((bits + (1 << (drop - 1))) & ~((1 << drop) - 1));
     }
 
     /** Same transform as the depth copy shader: reverse-Z -> standard NDC, then metres when linearized. */
@@ -385,7 +428,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
                         depth = 1.0f - depth;
                     }
                     depth = twoZnZf / (zfPlusZn - (2.0f * depth - 1.0f) * zfMinusZn);
-                    zBuf.put(dstIdx, depth);
+                    zBuf.put(dstIdx, quantize(depth));
                 }
             }
         } else {
@@ -397,7 +440,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
                     if (depthFrame.encoding == DepthCaptureState.Encoding.REVERSED_NDC) {
                         depth = 1.0f - depth;
                     }
-                    zBuf.put(dstIdx, depth);
+                    zBuf.put(dstIdx, quantize(depth));
                 }
             }
         }
@@ -455,9 +498,10 @@ public class MultiLayerExrWriter implements AutoCloseable {
 
     /** Header strings of this frame (after the fixed attributes); returns how many were set. */
     private int setFrameAttributes(int frameNumber, TranslucentCaptureState.CameraInfo camera) {
-        String layers = !translucentLayer ? "Combined, Depth"
+        String layers = (!translucentLayer ? "Combined, Depth"
                 : frameSplit ? "Combined (solid scene), Depth (solid), Trans (premultiplied), TransDepth"
-                : "Combined (glass baked in: no translucent layer this frame), Depth, Trans (empty), TransDepth";
+                : "Combined (glass baked in: no translucent layer this frame), Depth, Trans (empty), TransDepth")
+                + (hudLayer ? ", UI (HUD, premultiplied)" : "");
         String[] values = camera == null
                 ? new String[] {Integer.toString(frameNumber), null, null, null, layers}
                 : new String[] {
@@ -503,7 +547,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
         MemoryUtil.memFree(bBuf);
         MemoryUtil.memFree(aBuf);
         MemoryUtil.memFree(zBuf);
-        for (FloatBuffer b : new FloatBuffer[] {trBuf, tgBuf, tbBuf, taBuf, tzBuf}) {
+        for (FloatBuffer b : new FloatBuffer[] {trBuf, tgBuf, tbBuf, taBuf, tzBuf, urBuf, ugBuf, ubBuf, uaBuf}) {
             if (b != null) MemoryUtil.memFree(b);
         }
         freeFrameAttributes();

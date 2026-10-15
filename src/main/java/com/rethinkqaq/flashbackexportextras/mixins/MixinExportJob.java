@@ -81,6 +81,10 @@ public class MixinExportJob {
     @Unique
     private boolean isExrTranslucentLayer;
 
+    // Export Transparent's HUD layer (UI): the export draws a HUD
+    @Unique
+    private boolean isExrHudLayer;
+
     @Unique
     private int flashbackexportextras_originalDummyFrames;
 
@@ -157,7 +161,8 @@ public class MixinExportJob {
             int w = settings.resolutionX();
             int h = settings.resolutionY();
             return new ExrVideoWriter(outputDir, w, h, isExrSceneLinearHdr,
-                    FlashbackExportExtrasConfig.INSTANCE.getExrCompression(), isExrTranslucentLayer);
+                    FlashbackExportExtrasConfig.INSTANCE.getExrCompression(), isExrTranslucentLayer,
+                    isExrHudLayer, FlashbackExportExtrasConfig.INSTANCE.exrDepthBits);
         }
         /*? if hdr {*/
         if (isHdrMode) {
@@ -195,6 +200,8 @@ public class MixinExportJob {
         // the layer is 8-bit sRGB like the scene: not with scene-linear HDR colour
         isExrTranslucentLayer = isExrMode && !isExrSceneLinearHdr
                 && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED;
+        // Combined is the solid scene before the HUD: the HUD goes to its own UI layer, like a live take
+        isExrHudLayer = isExrTranslucentLayer && !settings.noGui();
         if (isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && !isExrTranslucentLayer) {
             FlashbackExportExtras.LOGGER.warn("Export Transparent is off for this export ({})",
                     isExrSceneLinearHdr ? "scene-linear HDR colour" : "needs Minecraft 26.3");
@@ -225,7 +232,11 @@ public class MixinExportJob {
         //? if >=26.3 {
         /*com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.reset();
         *///?}
+        //? if >=26.3 {
+        /*com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.reset();
+        *///?}
         TranslucentCaptureState.active = isExrTranslucentLayer;
+        TranslucentCaptureState.hudActive = isExrHudLayer;
         /*? if hdr {*/
         HdrVideoCaptureState.reset();
         flashbackexportextras_hdrCaptureFrameCount = 0L;
@@ -297,6 +308,13 @@ public class MixinExportJob {
             }
         }
         flashbackexportextras$captureHdrBeforeDownload(target);
+        //? if >=26.3 {
+        /*if (isExrHudLayer) {
+            // the frame's HUD (or an empty layer when none was drawn)
+            com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.finishFrame(
+                    DepthCaptureState.submittedCaptureFrameId());
+        }
+        *///?}
         if (isExrMode) {
             // the camera of this frame, for the EXR header
             TranslucentCaptureState.putCamera(flashbackexportextras_nextDepthColorFrameId,
@@ -371,6 +389,9 @@ public class MixinExportJob {
         //? if >=26.3 {
         /*if (isExrTranslucentLayer) {
             com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.flush();
+        }
+        if (isExrHudLayer) {
+            com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.flush();
         }
         *///?}
         /*? if hdr {*/
@@ -477,6 +498,7 @@ public class MixinExportJob {
             TranslucentCaptureState.reset();
             //? if >=26.3 {
             /*com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.reset();
+            com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.reset();
             *///?}
         });
         flashbackexportextras$cleanupStep("scene-linear HDR frame state", SceneLinearHdrCaptureState::reset);
@@ -497,6 +519,7 @@ public class MixinExportJob {
         isExrMode = false;
         isExrSceneLinearHdr = false;
         isExrTranslucentLayer = false;
+        isExrHudLayer = false;
         isHdrMode = false;
         flashbackexportextras_nextDepthColorFrameId = 0L;
         /*? if hdr {*/

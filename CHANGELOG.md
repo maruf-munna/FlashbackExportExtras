@@ -2,6 +2,16 @@
 
 Newest first, headed by `mod.version` (`gradle.properties`).
 
+## 1.3.0-dev - 2026-10-15
+- **HUD layer:** with Export Transparent the HUD the export draws (hotbar, crosshair, chat, ...) is its own EXR layer `UI`
+  (premultiplied RGBA, alpha as real coverage), like a Flashplus live take. Before, `Combined` was taken before the HUD
+  and the hotbar was lost. A frame without a HUD gets an empty `UI` (same channels in every EXR).
+- **Depth precision** (OpenEXR options): *16 bits* (default) rounds `Depth.Z` / `TransDepth.Z` to 16 mantissa bits like
+  the Flashplus converter (0.8 mm at 100 m, about 16 % smaller files), *Full* = lossless. zstd EXR compression was
+  tried and left out: Blender 5.2 cannot read it.
+- Test: 26.3, Improved Transparency on, Flashback *Record hotbar* on, export OpenEXR with Export Transparent following
+  a player: `UI` has the hotbar; the header `mc.channels` ends with `UI (HUD, premultiplied)`.
+
 ## 1.2.0-dev - 2026-10-15
 - **Export Transparent (Trans layer)**, OpenEXR options, on by default (Minecraft 26.3, Video Settings > Improved
   Transparency on, no Iris shader pack): glass, water, particles, rain and clouds go to their own EXR layer `Trans`

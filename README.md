@@ -17,7 +17,7 @@ English | [中文](README_zh.md)
 - Export scene-linear HDR color for OpenEXR post-processing.
 - **Export Transparent** (Minecraft 26.3, Improved Transparency): glass, water, particles, rain and clouds in their own
   EXR layer (`Trans` + `TransDepth`), the solid world in `Combined` / `Depth`, like a Flashplus live take; the camera of
-  every frame in the EXR header (`mc.camera.*`).
+  every frame in the EXR header (`mc.camera.*`), the HUD as its own `UI` layer, and a 16-bit depth precision option.
 - Export HDR10 video when HDR Mod is installed.
 - Export camera paths for Blender, After Effects, and Fusion in GLB, USDA, JSON, JSX, and Lua formats.
 
