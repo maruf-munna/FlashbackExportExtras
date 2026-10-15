@@ -77,6 +77,10 @@ public class MixinExportJob {
     @Unique
     private boolean isHdrMode;
 
+    // Export Transparent for this export (EXR, SDR colour, 26.3)
+    @Unique
+    private boolean isExrTranslucentLayer;
+
     @Unique
     private int flashbackexportextras_originalDummyFrames;
 
@@ -153,7 +157,7 @@ public class MixinExportJob {
             int w = settings.resolutionX();
             int h = settings.resolutionY();
             return new ExrVideoWriter(outputDir, w, h, isExrSceneLinearHdr,
-                    FlashbackExportExtrasConfig.INSTANCE.getExrCompression());
+                    FlashbackExportExtrasConfig.INSTANCE.getExrCompression(), isExrTranslucentLayer);
         }
         /*? if hdr {*/
         if (isHdrMode) {
@@ -188,6 +192,13 @@ public class MixinExportJob {
         isExrSceneLinearHdr = isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr
                 && HdrExportState.isAvailable()
                 && GpuExportBackendFactory.get().supportsSceneLinearHdr();
+        // the layer is 8-bit sRGB like the scene: not with scene-linear HDR colour
+        isExrTranslucentLayer = isExrMode && !isExrSceneLinearHdr
+                && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED;
+        if (isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && !isExrTranslucentLayer) {
+            FlashbackExportExtras.LOGGER.warn("Export Transparent is off for this export ({})",
+                    isExrSceneLinearHdr ? "scene-linear HDR colour" : "needs Minecraft 26.3");
+        }
     }
 
     // === doExport HEAD ===
@@ -210,6 +221,11 @@ public class MixinExportJob {
         }
         DepthCaptureState.reset();
         SceneLinearHdrCaptureState.reset();
+        TranslucentCaptureState.reset();
+        //? if >=26.3 {
+        /*com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.reset();
+        *///?}
+        TranslucentCaptureState.active = isExrTranslucentLayer;
         /*? if hdr {*/
         HdrVideoCaptureState.reset();
         flashbackexportextras_hdrCaptureFrameCount = 0L;
@@ -281,6 +297,13 @@ public class MixinExportJob {
             }
         }
         flashbackexportextras$captureHdrBeforeDownload(target);
+        if (isExrMode) {
+            // the camera of this frame, for the EXR header
+            TranslucentCaptureState.putCamera(flashbackexportextras_nextDepthColorFrameId,
+                    new TranslucentCaptureState.CameraInfo(DepthCaptureState.camX, DepthCaptureState.camY,
+                            DepthCaptureState.camZ, DepthCaptureState.camYaw, DepthCaptureState.camPitch,
+                            DepthCaptureState.fovDegrees));
+        }
         downloader.startDownload(target, framebuffer, flag);
         if (isExrMode) {
             flashbackexportextras_nextDepthColorFrameId++;
@@ -345,6 +368,11 @@ public class MixinExportJob {
         if (!isExrMode && !isHdrMode) return;
         FlashbackExportExtras.LOGGER.info("Export GPU flush started: exr={}, hdr={}", isExrMode, isHdrMode);
         GpuExportBackendFactory.get().flush();
+        //? if >=26.3 {
+        /*if (isExrTranslucentLayer) {
+            com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.flush();
+        }
+        *///?}
         /*? if hdr {*/
         if (isHdrMode) {
             flashbackexportextras$drainHdrFrames();
@@ -445,6 +473,12 @@ public class MixinExportJob {
             /*?}*/
         });
         flashbackexportextras$cleanupStep("depth frame state", DepthCaptureState::reset);
+        flashbackexportextras$cleanupStep("translucent layer state", () -> {
+            TranslucentCaptureState.reset();
+            //? if >=26.3 {
+            /*com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.reset();
+            *///?}
+        });
         flashbackexportextras$cleanupStep("scene-linear HDR frame state", SceneLinearHdrCaptureState::reset);
         flashbackexportextras$cleanupStep("HDR10 frame state", () -> {
             /*? if hdr {*/
@@ -462,6 +496,7 @@ public class MixinExportJob {
         cameraExporter = null;
         isExrMode = false;
         isExrSceneLinearHdr = false;
+        isExrTranslucentLayer = false;
         isHdrMode = false;
         flashbackexportextras_nextDepthColorFrameId = 0L;
         /*? if hdr {*/

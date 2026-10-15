@@ -52,6 +52,12 @@ public class FlashbackExportExtrasConfig {
     /** True = preserve scene-linear Rec.709 HDR color in OpenEXR output. */
     public boolean exrSceneLinearHdr = false;
 
+    /**
+     * Export Transparent: glass, water, particles, weather and clouds go to their own EXR layer (Trans + TransDepth),
+     * Combined / Depth hold the solid scene, like a FlashPlus live take. 26.3 with Improved Transparency.
+     */
+    public boolean exrTranslucentLayer = true;
+
     /** Lossless EXR compression preset selected by the user. */
     public ExrCompression exrCompression = ExrCompression.ZIP;
 

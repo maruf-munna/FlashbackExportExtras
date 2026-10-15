@@ -160,6 +160,12 @@ public class MixinGameRenderer {
                 DepthCaptureState.camYaw = camera.getYRot();
                 DepthCaptureState.camPitch = camera.getXRot();
                 /*?}*/
+                /*? if >=26.2 {*/
+                /*// the vertical FOV the frame was rendered with (FOV keyframes and effects included)
+                DepthCaptureState.fovDegrees = camera.getFov();
+                *//*?} else {*/
+                DepthCaptureState.fovDegrees = DepthCaptureState.keyframeTargetFov;
+                /*?}*/
             }
             flashbackexportextras_cameraCaptureFailedLogged = false;
         } catch (Exception e) {
@@ -182,6 +188,11 @@ public class MixinGameRenderer {
         GpuTexture hand = flashbackexportextras_handDepthTexture;
         flashbackexportextras_handDepthTexture = null;
         GpuExportBackendFactory.captureHandDepthOnRenderThread(hand);
+        //? if >=26.3 {
+        /^// Export Transparent: the solid colour of this frame (hand included, no GUI) and its translucent layer
+        com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.afterLevel(
+                Minecraft.getInstance().gameRenderer.mainRenderTarget());
+        ^///?}
     }
     *//*?}*/
 
@@ -212,6 +223,14 @@ public class MixinGameRenderer {
             // before translucent world rendering, so it is not a complete
             // scene depth source. Always capture Minecraft's final main
             // RenderTarget immediately before its world-depth clear instead.
+            //? if >=26.3 {
+            /*// Export Transparent: the depth of the solid scene (glass is in TransDepth)
+            RenderTarget solid = com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE
+                    .solidDepthFor(frameId);
+            if (solid != null) {
+                target = solid;
+            }
+            *///?}
             GpuExportBackendFactory.get().captureDepthBeforeClear(clearEncoder,
                     target, DepthCaptureState.width, DepthCaptureState.height,
                     DepthCaptureState.depthFar, frameId);

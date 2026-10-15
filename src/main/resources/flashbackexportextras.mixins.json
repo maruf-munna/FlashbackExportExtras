@@ -13,7 +13,8 @@
     "AsyncFileDialogsAccessor",
     "MixinMinecraftShutdown",
     "MixinStartExportWindow",
-    "MixinFOVKeyframe"
+    "MixinFOVKeyframe",
+    "MixinLevelRendererTranslucent"
   ],
   "mixins": [
     "MixinExportJob",
