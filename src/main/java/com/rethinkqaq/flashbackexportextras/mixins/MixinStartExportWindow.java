@@ -35,6 +35,7 @@ import net.minecraft.client.resources.language.I18n;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -63,33 +64,12 @@ public class MixinStartExportWindow {
         exrOutputNameInitialized = false;
     }
 
-    /** Trace the asynchronous folder/file selection before an ExportJob exists. */
-    @Inject(method = "createExportSettings", at = @At("RETURN"), remap = false)
-    private static void flashbackexportextras$traceExportSettings(String jobName, FlashbackConfigV1 config,
-                                                           CallbackInfoReturnable<CompletableFuture<ExportSettings>> cir) {
-        CompletableFuture<ExportSettings> future = cir.getReturnValue();
-        com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.info(
-                "Export settings request created: jobName={}, container={}, future={}",
-                jobName, config.internalExport.container, future != null);
-        if (future == null) {
-            com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.warn(
-                    "Export settings request returned null future");
-            return;
-        }
-        future.whenComplete((settings, error) -> {
-            if (error != null) {
-                com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.error(
-                        "Export settings future failed", error);
-            } else if (settings == null) {
-                com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.warn(
-                        "Export settings future completed with null; export was cancelled or file dialog failed");
-            } else {
-                com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.LOGGER.info(
-                        "Export settings ready: output={}, container={}, resolution={}x{}, framerate={}",
-                        settings.output(), settings.container(), settings.resolutionX(), settings.resolutionY(),
-                        settings.framerate());
-            }
-        });
+    // Folder dialogs may return a drive root, whose parent is null. Remember the root itself in that case.
+    @Redirect(method = "lambda$createExportSettings$0", at = @At(value = "INVOKE",
+            target = "Ljava/nio/file/Path;getParent()Ljava/nio/file/Path;"), remap = false, require = 0)
+    private static java.nio.file.Path flashbackexportextras$safeOutputParent(java.nio.file.Path selected) {
+        java.nio.file.Path parent = selected.getParent();
+        return parent == null ? selected.toAbsolutePath().normalize() : parent;
     }
 
     // === Format selector: injected at start of renderVideoOptions ===
@@ -139,7 +119,7 @@ public class MixinStartExportWindow {
             config.internalExport.ssaa = false;
 
             ImGui.spacing();
-            ImGui.textWrapped(I18n.get("flashbackexportextras.exr_info"));
+
 
             if (!exrOutputNameInitialized) {
                 String configuredName = FlashbackExportExtrasConfig.INSTANCE.exrOutputName == null
@@ -163,14 +143,25 @@ public class MixinStartExportWindow {
                 ImGui.setTooltip(I18n.get("flashbackexportextras.exr_output_name_tooltip"));
             }
 
-            // Depth linearization option
-            boolean lin = FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace;
-            if (ImGui.checkbox(I18n.get("flashbackexportextras.linearize_depth"), lin)) {
-                FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace = !lin;
+            boolean exportDepth = FlashbackExportExtrasConfig.INSTANCE.exrExportDepth;
+            if (ImGui.checkbox("Include Depth", exportDepth)) {
+                FlashbackExportExtrasConfig.INSTANCE.exrExportDepth = !exportDepth;
                 FlashbackExportExtrasConfig.save();
             }
-            if (ImGui.isItemHovered()) {
-                ImGui.setTooltip(I18n.get("flashbackexportextras.linearize_depth_tooltip"));
+            if (ImGui.isItemHovered()) ImGui.setTooltip("Off exports color and UI without Depth or TransDepth channels.");
+
+            // Depth controls apply only when depth channels are included.
+            exportDepth = FlashbackExportExtrasConfig.INSTANCE.exrExportDepth;
+            if (exportDepth) {
+                boolean lin = FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace;
+                if (ImGui.checkbox(I18n.get("flashbackexportextras.linearize_depth"), lin)) {
+                    FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace = !lin;
+                    FlashbackExportExtrasConfig.save();
+                }
+                if (ImGui.isItemHovered()) {
+                    ImGui.setTooltip(I18n.get("flashbackexportextras.linearize_depth_tooltip"));
+                }
+
             }
 
             // Export Transparent: glass / water / particles / clouds as their own layer (Trans + TransDepth)
@@ -194,21 +185,24 @@ public class MixinStartExportWindow {
             }
 
             // Depth precision: 16 mantissa bits like the Flashplus converter (smaller), or lossless float
-            boolean depth16 = FlashbackExportExtrasConfig.INSTANCE.exrDepthBits < 23;
-            if (ImGui.beginCombo(I18n.get("flashbackexportextras.exr_depth_bits"), I18n.get(depth16
-                    ? "flashbackexportextras.exr_depth_bits_16" : "flashbackexportextras.exr_depth_bits_full"))) {
-                if (ImGui.selectable(I18n.get("flashbackexportextras.exr_depth_bits_16"), depth16)) {
-                    FlashbackExportExtrasConfig.INSTANCE.exrDepthBits = 16;
-                    FlashbackExportExtrasConfig.save();
+            if (exportDepth) {
+                boolean depth16 = FlashbackExportExtrasConfig.INSTANCE.exrDepthBits < 23;
+                if (ImGui.beginCombo(I18n.get("flashbackexportextras.exr_depth_bits"), I18n.get(depth16
+                        ? "flashbackexportextras.exr_depth_bits_16" : "flashbackexportextras.exr_depth_bits_full"))) {
+                    if (ImGui.selectable(I18n.get("flashbackexportextras.exr_depth_bits_16"), depth16)) {
+                        FlashbackExportExtrasConfig.INSTANCE.exrDepthBits = 16;
+                        FlashbackExportExtrasConfig.save();
+                    }
+                    if (ImGui.selectable(I18n.get("flashbackexportextras.exr_depth_bits_full"), !depth16)) {
+                        FlashbackExportExtrasConfig.INSTANCE.exrDepthBits = 23;
+                        FlashbackExportExtrasConfig.save();
+                    }
+                    ImGui.endCombo();
                 }
-                if (ImGui.selectable(I18n.get("flashbackexportextras.exr_depth_bits_full"), !depth16)) {
-                    FlashbackExportExtrasConfig.INSTANCE.exrDepthBits = 23;
-                    FlashbackExportExtrasConfig.save();
+                if (ImGui.isItemHovered()) {
+                    ImGui.setTooltip(I18n.get("flashbackexportextras.exr_depth_bits_tooltip"));
                 }
-                ImGui.endCombo();
-            }
-            if (ImGui.isItemHovered()) {
-                ImGui.setTooltip(I18n.get("flashbackexportextras.exr_depth_bits_tooltip"));
+
             }
 
             FlashbackExportExtrasConfig.ExrCompression compression =

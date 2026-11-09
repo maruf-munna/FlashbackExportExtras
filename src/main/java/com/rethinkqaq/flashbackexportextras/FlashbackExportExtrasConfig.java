@@ -49,6 +49,9 @@ public class FlashbackExportExtrasConfig {
     /** True = linearize depth from NDC [0,1] to world-space distance. */
     public boolean depthLinearizeWorldSpace = true;
 
+    /** Include Depth.Z and TransDepth.Z in EXR sequences; other export modes are unaffected. */
+    public boolean exrExportDepth = true;
+
     /** True = preserve scene-linear Rec.709 HDR color in OpenEXR output. */
     public boolean exrSceneLinearHdr = false;
 

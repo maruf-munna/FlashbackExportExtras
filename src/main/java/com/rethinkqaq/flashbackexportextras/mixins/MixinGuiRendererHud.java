@@ -32,7 +32,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 *///?}
 import org.spongepowered.asm.mixin.Mixin;
 
-/** Export Transparent HUD layer (26.3): after the HUD is drawn, it is drawn once more into the UI layer target. */
+/** Export Transparent HUD layer (26.3): preserve clean Combined and write the HUD to the UI layer. */
 //? if >=26.3 {
 /*@Mixin(value = GuiRenderer.class, remap = false)
 *///?} else {
@@ -40,6 +40,14 @@ import org.spongepowered.asm.mixin.Mixin;
 //?}
 public class MixinGuiRendererHud {
     //? if >=26.3 {
+    /*@Inject(method = "draw", at = @At("HEAD"), remap = false)
+    private void flashbackexportextras$snapshotCombinedBeforeHud(CallbackInfo ci) {
+        if (TranslucentCaptureState.hudActive) {
+            HudExportCapture.INSTANCE.beginGuiDraw();
+        }
+    }
+    */
+
     /*@Inject(method = "draw", at = @At("RETURN"), remap = false)
     private void flashbackexportextras$captureHudLayer(CallbackInfo ci) {
         if (!TranslucentCaptureState.hudActive) {

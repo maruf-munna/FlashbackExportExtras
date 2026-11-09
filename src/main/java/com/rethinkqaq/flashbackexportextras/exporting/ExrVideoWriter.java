@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import org.lwjgl.system.MemoryUtil;
 
 /**
  * VideoWriter implementation that writes multi-layer OpenEXR frames
@@ -63,6 +64,8 @@ public class ExrVideoWriter implements VideoWriter {
     private final boolean translucentLayer;
     // the HUD as its own layer: each frame also waits for its HUD readback
     private final boolean hudLayer;
+    private final int width;
+    private final int height;
     private volatile boolean accepting = true;
     private boolean finished;
     private long nextFrameId;
@@ -78,13 +81,16 @@ public class ExrVideoWriter implements VideoWriter {
                           int depthBits) throws IOException {
         this.sceneLinearHdr = sceneLinearHdr;
         this.translucentLayer = translucentLayer;
-        this.hudLayer = translucentLayer && hudLayer;
+        this.hudLayer = hudLayer;
+        this.width = width;
+        this.height = height;
         this.exrWriters = new MultiLayerExrWriter[WRITER_COUNT];
         try {
             for (int i = 0; i < WRITER_COUNT; i++) {
                 exrWriters[i] = new MultiLayerExrWriter(outputDir, width, height,
                         FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace, sceneLinearHdr,
-                        compression, translucentLayer, this.hudLayer, depthBits);
+                        compression, translucentLayer, this.hudLayer, depthBits,
+                        FlashbackExportExtrasConfig.INSTANCE.exrExportDepth);
             }
         } catch (IOException | RuntimeException e) {
             for (MultiLayerExrWriter writer : exrWriters) {
@@ -158,6 +164,12 @@ public class ExrVideoWriter implements VideoWriter {
             TranslucentCaptureState.TransFrame transFrame = translucentLayer
                     ? TranslucentCaptureState.poll(nextFrameId) : null;
             TranslucentCaptureState.HudFrame hudFrame = hudLayer ? TranslucentCaptureState.pollHud(nextFrameId) : null;
+            if (hudLayer && hudFrame != null) {
+                if (hudFrame.rgba == null) {
+                    hudFrame.rgba = MemoryUtil.memCalloc(width * height * 4);
+                }
+                FlashPlusUiBridge.blend(hudFrame.rgba, width, height);
+            }
             TranslucentCaptureState.CameraInfo camera = TranslucentCaptureState.takeCamera(nextFrameId);
 
             NativeImage colorImage = pendingColors.removeFirst();
@@ -192,7 +204,7 @@ public class ExrVideoWriter implements VideoWriter {
                 try {
                     if (packet.sceneLinearHdr != null) {
                         exrWriters[workerIndex].writeHdrFrame(packet.sceneLinearHdr, packet.depth,
-                                packet.frameId);
+                                packet.hud, packet.camera, packet.frameId);
                     } else {
                         exrWriters[workerIndex].writeFrame(packet.color, packet.depth, packet.trans,
                                 packet.hud, packet.camera, packet.frameId);

@@ -43,7 +43,7 @@ public final class TranslucentCaptureState {
     /** The HUD of one frame: premultiplied RGBA8 (sRGB-encoded), bottom-up; null = no HUD drawn that frame. */
     public static final class HudFrame {
         public final long frameId;
-        public final ByteBuffer rgba;
+        public ByteBuffer rgba;
 
         public HudFrame(long frameId, ByteBuffer rgba) {
             this.frameId = frameId;

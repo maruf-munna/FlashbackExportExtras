@@ -19,7 +19,7 @@ public final class ExportPerformanceTrace {
     public static void tinyExr(long frameId, long nativeWriteNanos, long fileSizeBytes,
                                int compressionType, String path) {
         if (!sample(frameId)) return;
-        FlashbackExportExtras.LOGGER.info(
+        FlashbackExportExtras.LOGGER.debug(
                 "TinyEXR write frame {}: thread={}, durationMs={}, sizeBytes={}, compression={}, path={}",
                 frameId, Thread.currentThread().getName(), nanosToMillis(nativeWriteNanos),
                 fileSizeBytes, compressionType, path);

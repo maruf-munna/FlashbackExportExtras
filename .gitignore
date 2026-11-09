@@ -22,3 +22,6 @@ run
 bin/
 /.gradle-user-home/
 /.gradle-user/
+
+# Logs produced by version-specific development runs
+/versions/*/logs/

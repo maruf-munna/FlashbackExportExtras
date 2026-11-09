@@ -200,8 +200,8 @@ public class MixinExportJob {
         // the layer is 8-bit sRGB like the scene: not with scene-linear HDR colour
         isExrTranslucentLayer = isExrMode && !isExrSceneLinearHdr
                 && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED;
-        // Combined is the solid scene before the HUD: the HUD goes to its own UI layer, like a live take
-        isExrHudLayer = isExrTranslucentLayer && !settings.noGui();
+        // Independent of Export Transparent, but only supported by the 26.3 HUD capture hook.
+        isExrHudLayer = isExrMode && !settings.noGui() && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED;
         if (isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && !isExrTranslucentLayer) {
             FlashbackExportExtras.LOGGER.warn("Export Transparent is off for this export ({})",
                     isExrSceneLinearHdr ? "scene-linear HDR colour" : "needs Minecraft 26.3");
@@ -216,6 +216,7 @@ public class MixinExportJob {
         FlashbackExportExtras.LOGGER.info("ExportJob doExport started: writer={}",
                 videoWriter == null ? "null" : videoWriter.getClass().getName());
         flashbackexportextras_sessionActive = true;
+        com.rethinkqaq.flashbackexportextras.exporting.FlashPlusUiBridge.setSeparateUiOutput(isExrHudLayer);
         flashbackexportextras_nextDepthColorFrameId = 0L;
         if (isExrMode) {
             com.moulberry.flashback.configuration.FlashbackConfigV1 config =
@@ -526,6 +527,7 @@ public class MixinExportJob {
         hdrWriterRef = null;
         /*?}*/
         flashbackexportextras_sessionActive = false;
+        com.rethinkqaq.flashbackexportextras.exporting.FlashPlusUiBridge.setSeparateUiOutput(false);
         FlashbackExportExtras.LOGGER.info("Export session cleanup completed");
         if (cameraExportFailure != null) throw cameraExportFailure;
     }

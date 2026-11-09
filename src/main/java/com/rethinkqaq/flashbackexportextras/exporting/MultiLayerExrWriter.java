@@ -77,6 +77,8 @@ public class MultiLayerExrWriter implements AutoCloseable {
     };
 
     private final int numChannels;
+    private final boolean exportDepth;
+    private final int[] channelIndices;
     private final boolean translucentLayer;
     // HUD as its own premultiplied layer (UI), with Export Transparent when the export draws a HUD
     private final boolean hudLayer;
@@ -123,10 +125,24 @@ public class MultiLayerExrWriter implements AutoCloseable {
     public MultiLayerExrWriter(Path outputDir, int width, int height, boolean linearizeDepth,
                                boolean sceneLinearHdr, ExrCompression compression,
                                boolean translucentLayer, boolean hudLayer, int depthBits) throws IOException {
+        this(outputDir, width, height, linearizeDepth, sceneLinearHdr, compression,
+                translucentLayer, hudLayer, depthBits, true);
+    }
+
+    public MultiLayerExrWriter(Path outputDir, int width, int height, boolean linearizeDepth,
+                               boolean sceneLinearHdr, ExrCompression compression,
+                               boolean translucentLayer, boolean hudLayer, int depthBits,
+                               boolean exportDepth) throws IOException {
         this.translucentLayer = translucentLayer;
-        this.hudLayer = translucentLayer && hudLayer;
+        this.hudLayer = hudLayer;
+        this.exportDepth = exportDepth;
+        this.channelIndices = java.util.stream.IntStream.range(0, CHANNEL_NAMES.length)
+                .filter(i -> (i < 4 || i == 4 && exportDepth
+                        || i >= 5 && i <= 8 && translucentLayer
+                        || i == 9 && translucentLayer && exportDepth
+                        || i >= 10 && hudLayer)).toArray();
         this.depthBits = Math.max(10, Math.min(23, depthBits));
-        this.numChannels = this.hudLayer ? 14 : translucentLayer ? 10 : 5;
+        this.numChannels = channelIndices.length;
         final int NUM_CHANNELS = numChannels;
         this.outputDir = outputDir;
         this.width = width;
@@ -171,36 +187,24 @@ public class MultiLayerExrWriter implements AutoCloseable {
 
         // --- Pre-configure immutable channel metadata ---
         for (int i = 0; i < NUM_CHANNELS; i++) {
-            ByteBuffer nameBuf = MemoryUtil.memUTF8(CHANNEL_NAMES[i]);
+            ByteBuffer nameBuf = MemoryUtil.memUTF8(CHANNEL_NAMES[channelIndices[i]]);
             nameBufs.add(nameBuf);
             channelInfo.get(i).name(nameBuf);
             pixelTypes.put(i, TinyEXR.TINYEXR_PIXELTYPE_FLOAT);
             // RGBA → HALF output; Depth → FLOAT output (ReplayMod pattern)
-            boolean depthChannel = CHANNEL_NAMES[i].endsWith(".Z");
+            boolean depthChannel = CHANNEL_NAMES[channelIndices[i]].endsWith(".Z");
             requestedTypes.put(i, depthChannel ? TinyEXR.TINYEXR_PIXELTYPE_FLOAT : TinyEXR.TINYEXR_PIXELTYPE_HALF);
         }
-        pixelTypes.flip();
-        requestedTypes.flip();
+        pixelTypes.clear();
+        requestedTypes.clear();
 
-        // --- Pre-set image pointer table (native addresses are stable) ---
-        // Channel order: A, B, G, R, Z
-        imagePtrs.put(0, MemoryUtil.memAddress(aBuf));
-        imagePtrs.put(1, MemoryUtil.memAddress(bBuf));
-        imagePtrs.put(2, MemoryUtil.memAddress(gBuf));
-        imagePtrs.put(3, MemoryUtil.memAddress(rBuf));
-        imagePtrs.put(4, MemoryUtil.memAddress(zBuf));
-        if (translucentLayer) {
-            imagePtrs.put(5, MemoryUtil.memAddress(taBuf));
-            imagePtrs.put(6, MemoryUtil.memAddress(tbBuf));
-            imagePtrs.put(7, MemoryUtil.memAddress(tgBuf));
-            imagePtrs.put(8, MemoryUtil.memAddress(trBuf));
-            imagePtrs.put(9, MemoryUtil.memAddress(tzBuf));
-        }
-        if (this.hudLayer) {
-            imagePtrs.put(10, MemoryUtil.memAddress(uaBuf));
-            imagePtrs.put(11, MemoryUtil.memAddress(ubBuf));
-            imagePtrs.put(12, MemoryUtil.memAddress(ugBuf));
-            imagePtrs.put(13, MemoryUtil.memAddress(urBuf));
+        // Build a dense pointer table for exactly the channels in this header. Never leave native pointers unset.
+        FloatBuffer[] channelBuffers = {aBuf, bBuf, gBuf, rBuf, zBuf,
+                taBuf, tbBuf, tgBuf, trBuf, tzBuf, uaBuf, ubBuf, ugBuf, urBuf};
+        for (int index : channelIndices) {
+            FloatBuffer buffer = channelBuffers[index];
+            if (buffer == null) throw new IllegalStateException("No pixel buffer for EXR channel " + CHANNEL_NAMES[index]);
+            imagePtrs.put(MemoryUtil.memAddress(buffer));
         }
         imagePtrs.flip();
 
@@ -243,9 +247,26 @@ public class MultiLayerExrWriter implements AutoCloseable {
     public void writeFrame(NativeImage colorImage, DepthCaptureState.DepthFrame depthFrame,
                            TranslucentCaptureState.TransFrame trans, TranslucentCaptureState.HudFrame hud,
                            TranslucentCaptureState.CameraInfo camera, int frameNumber) throws IOException {
+        fillHud(hud);
+        frameSplit = translucentLayer && trans != null && trans.hasSplit();
+        if (frameSplit) {
+            fillRgba8BottomUp(trans.solid, rBuf, gBuf, bBuf, aBuf, true);
+            fillRgba8BottomUp(trans.layer, trBuf, tgBuf, tbBuf, taBuf, false);
+            if (exportDepth) fillTransDepth(trans);
+        } else {
+            fillSdrColor(colorImage);
+            if (translucentLayer) {
+                clearTranslucent(depthFrame);
+            }
+        }
+        if (exportDepth) fillDepth(depthFrame);
+        writeExr(frameNumber, camera);
+        frameCount++;
+    }
+
+    private void fillHud(TranslucentCaptureState.HudFrame hud) {
         if (hudLayer) {
-            // a frame without the split has Flashback's picture (HUD included) in Combined: no second HUD then
-            if (hud != null && hud.rgba != null && trans != null && trans.hasSplit()) {
+            if (hud != null && hud.rgba != null) {
                 fillRgba8BottomUp(hud.rgba, urBuf, ugBuf, ubBuf, uaBuf, false);
             } else {
                 // no HUD drawn this frame: an empty layer, so every EXR has the same channels
@@ -254,20 +275,6 @@ public class MultiLayerExrWriter implements AutoCloseable {
                 }
             }
         }
-        frameSplit = translucentLayer && trans != null && trans.hasSplit();
-        if (frameSplit) {
-            fillRgba8BottomUp(trans.solid, rBuf, gBuf, bBuf, aBuf, true);
-            fillRgba8BottomUp(trans.layer, trBuf, tgBuf, tbBuf, taBuf, false);
-            fillTransDepth(trans);
-        } else {
-            fillSdrColor(colorImage);
-            if (translucentLayer) {
-                clearTranslucent(depthFrame);
-            }
-        }
-        fillDepth(depthFrame);
-        writeExr(frameNumber, camera);
-        frameCount++;
     }
 
     /** RGBA8 rows bottom-up -> top-down float channels (0..1, the sRGB-encoded values Combined has). */
@@ -333,10 +340,18 @@ public class MultiLayerExrWriter implements AutoCloseable {
     /** Writes scene-linear Rec.709 RGBA16F color with the matching depth frame. */
     public void writeHdrFrame(ByteBuffer rgba16f, DepthCaptureState.DepthFrame depthFrame,
                               int frameNumber) throws IOException {
+        writeHdrFrame(rgba16f, depthFrame, null, null, frameNumber);
+    }
+
+    public void writeHdrFrame(ByteBuffer rgba16f, DepthCaptureState.DepthFrame depthFrame,
+                              TranslucentCaptureState.HudFrame hud,
+                              TranslucentCaptureState.CameraInfo camera, int frameNumber) throws IOException {
         fillSceneLinearHdrColor(rgba16f);
-        fillDepth(depthFrame);
+        if (exportDepth) fillDepth(depthFrame);
+        fillHud(hud);
+        if (translucentLayer) clearTranslucent(depthFrame);
         frameSplit = false;
-        writeExr(frameNumber, null);
+        writeExr(frameNumber, camera);
         frameCount++;
     }
 
@@ -476,7 +491,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
         image.images(imagePtrs);
 
         ByteBuffer pathBuf = MemoryUtil.memUTF8(filePath.toAbsolutePath().toString());
-        PointerBuffer err = MemoryUtil.memAllocPointer(1);
+        PointerBuffer err = MemoryUtil.memCallocPointer(1);
         try {
             long tinyExrStarted = System.nanoTime();
             int result = TinyEXR.SaveEXRImageToFile(image, header, pathBuf, err);
@@ -490,6 +505,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
             ExportPerformanceTrace.tinyExr(frameNumber, tinyExrNanos, fileSize,
                     compressionType, filePath.toString());
         } finally {
+            if (err.get(0) != 0L) TinyEXR.nFreeEXRErrorMessage(err.get(0));
             MemoryUtil.memFree(err);
             MemoryUtil.memFree(pathBuf);
             freeFrameAttributes();
@@ -502,6 +518,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
                 : frameSplit ? "Combined (solid scene), Depth (solid), Trans (premultiplied), TransDepth"
                 : "Combined (glass baked in: no translucent layer this frame), Depth, Trans (empty), TransDepth")
                 + (hudLayer ? ", UI (HUD, premultiplied)" : "");
+        if (!exportDepth) layers = layers.replace(", Depth (solid)", "").replace(", Depth", "").replace(", TransDepth", "");
         String[] values = camera == null
                 ? new String[] {Integer.toString(frameNumber), null, null, null, layers}
                 : new String[] {

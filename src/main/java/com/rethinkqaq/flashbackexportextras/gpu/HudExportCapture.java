@@ -39,6 +39,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL21;
 import org.lwjgl.opengl.GL32;
+import org.lwjgl.opengl.GL43;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -59,12 +60,14 @@ public final class HudExportCapture {
     private static final Vector4f TRANSPARENT = new Vector4f(0.0F, 0.0F, 0.0F, 0.0F);
 
     private TextureTarget target;
+    private TextureTarget cleanColorTarget;
     private final int[] pbos = new int[SLOTS];
     private final long[] fences = new long[SLOTS];
     private final long[] slotFrames = new long[SLOTS];
     private int pboWidth = -1;
     private int pboHeight = -1;
     private int writeSlot;
+    private boolean cleanColorSnapshotReady;
     // last export frame whose HUD was captured / handed to the writer
     private long lastCaptured = -1L;
     private long lastFinished = -1L;
@@ -74,19 +77,21 @@ public final class HudExportCapture {
 
     /^* GuiRenderer.draw has drawn this frame's HUD: replay it into the capture target and read it back. ^/
     public void capture(GuiRendererHudAccessor gui, int drawCount) {
-        if (!TranslucentCaptureState.hudActive || drawCount <= 0) {
+        if (!TranslucentCaptureState.hudActive) {
             return;
         }
         long frameId = DepthCaptureState.submittedCaptureFrameId();
-        if (frameId < 0L || frameId <= lastCaptured) {
-            return;
-        }
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         if (main == null || main.width <= 0 || main.height <= 0) {
             return;
         }
         try {
+            if (frameId < 0L || frameId <= lastCaptured) return;
             ensureTarget(main.width, main.height);
+            if (drawCount <= 0) {
+                restoreCleanColor(main);
+                return;
+            }
             RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), TRANSPARENT);
             GpuBufferSlice transforms = RenderSystem.getDynamicUniforms()
                     .writeTransform(new Matrix4f().setTranslation(0.0F, 0.0F, -11000.0F));
@@ -102,7 +107,39 @@ public final class HudExportCapture {
         } catch (RuntimeException e) {
             TranslucentCaptureState.failHud(e);
             FlashbackExportExtras.LOGGER.error("Export Transparent: HUD layer capture failed for frame " + frameId, e);
+        } finally {
+            restoreCleanColor(main);
+            cleanColorSnapshotReady = false;
         }
+    }
+
+    // Snapshot the just-rendered world before GuiRenderer draws HUD pixels into Combined.
+    public void beginGuiDraw() {
+        if (!TranslucentCaptureState.hudActive) return;
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        if (main == null || main.width <= 0 || main.height <= 0) return;
+        try {
+            ensureCleanTarget(main.width, main.height);
+            int source = main.getColorTexture() instanceof GlTexture gl ? gl.glId() : 0;
+            int destination = cleanColorTarget.getColorTexture() instanceof GlTexture gl ? gl.glId() : 0;
+            if (source <= 0 || destination <= 0) throw new IllegalStateException("Combined color is not a GL texture");
+            GL43.glCopyImageSubData(source, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                    destination, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, main.width, main.height, 1);
+            cleanColorSnapshotReady = true;
+        } catch (RuntimeException e) {
+            TranslucentCaptureState.failHud(e);
+            FlashbackExportExtras.LOGGER.error("Export Transparent: could not snapshot Combined before HUD draw", e);
+        }
+    }
+
+    private void restoreCleanColor(RenderTarget main) {
+        if (!cleanColorSnapshotReady || cleanColorTarget == null || main == null || cleanColorTarget.width != main.width
+                || cleanColorTarget.height != main.height) return;
+        int source = cleanColorTarget.getColorTexture() instanceof GlTexture gl ? gl.glId() : 0;
+        int destination = main.getColorTexture() instanceof GlTexture gl ? gl.glId() : 0;
+        if (source <= 0 || destination <= 0) return;
+        GL43.glCopyImageSubData(source, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
+                destination, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, main.width, main.height, 1);
     }
 
     /^* The frame is done (before its colour download): a frame without a HUD gets an empty layer. ^/
@@ -142,9 +179,14 @@ public final class HudExportCapture {
             target.destroyBuffers();
             target = null;
         }
+        if (cleanColorTarget != null) {
+            cleanColorTarget.destroyBuffers();
+            cleanColorTarget = null;
+        }
         lastCaptured = -1L;
         lastFinished = -1L;
         passActive = false;
+        cleanColorSnapshotReady = false;
     }
 
     private void ensureTarget(int width, int height) {
@@ -152,6 +194,15 @@ public final class HudExportCapture {
             target = new TextureTarget("Flashback Export Extras HUD layer", width, height, GpuFormat.RGBA8_UNORM, null);
         } else if (target.width != width || target.height != height) {
             target.resize(width, height);
+        }
+    }
+
+    private void ensureCleanTarget(int width, int height) {
+        if (cleanColorTarget == null) {
+            cleanColorTarget = new TextureTarget("Flashback Export Extras clean Combined", width, height,
+                    GpuFormat.RGBA8_UNORM, null);
+        } else if (cleanColorTarget.width != width || cleanColorTarget.height != height) {
+            cleanColorTarget.resize(width, height);
         }
     }
 
