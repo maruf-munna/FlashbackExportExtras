@@ -48,17 +48,20 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.io.IOException;
 import java.nio.FloatBuffer;
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.file.CopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 @Mixin(value = ExportJob.class, remap = false)
-public class MixinExportJob {
+public class MixinExportJob implements ExrAudioOutput {
 
     private static final DateTimeFormatter EXR_DEFAULT_NAME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'_HH_mm");
 
     @Shadow
     private ExportSettings settings;
+
 
     @Shadow
     private void doExport(VideoWriter videoWriter, SaveableFramebufferQueue downloader) {
@@ -67,6 +70,26 @@ public class MixinExportJob {
 
     @Unique
     private CameraPathExporter cameraExporter;
+
+    @Unique private Path sidecarStaging;
+    @Unique private Path sidecarDestination;
+    @Unique private ExrVideoWriter sidecarWriter;
+    @Unique private Render3dOptions render3d;
+    @Unique private ExportMode exportMode;
+    @Unique private boolean exrAudio;
+
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void flashbackexportextras$captureExportMode(CallbackInfo ci) {
+        var config = FlashbackExportExtrasConfig.INSTANCE;
+        exportMode = config.getExportMode();
+        exrAudio = config.exrExportAudio;
+        if (exportMode == ExportMode.RENDER_3D) render3d = Render3dOptions.capture(config);
+    }
+
+    @Override
+    public Boolean flashbackexportextras$exrAudio() {
+        return exportMode == ExportMode.EXR ? exrAudio : null;
+    }
 
     @Unique
     private boolean isExrMode;
@@ -138,6 +161,10 @@ public class MixinExportJob {
                 "ExportJob creating writer: output={}, container={}, resolution={}x{}, temp={}",
                 settings.output(), settings.container(), settings.resolutionX(), settings.resolutionY(), tempFileName);
         flashbackexportextras$configureExportModes();
+        if (render3d != null) {
+            render3d.validate(settings);
+            sidecarDestination = render3d.directoryFor(settings.output());
+        }
         if (isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr && !isExrSceneLinearHdr) {
             FlashbackExportExtras.LOGGER.warn(
                     "Scene-linear HDR EXR is unavailable in this runtime; exporting standard SDR color");
@@ -167,7 +194,7 @@ public class MixinExportJob {
             return new ExrVideoWriter(outputDir, w, h, isExrSceneLinearHdr,
                     FlashbackExportExtrasConfig.INSTANCE.getExrCompression(), isExrTranslucentLayer,
                     isExrHudLayer, FlashbackExportExtrasConfig.INSTANCE.exrDepthBits,
-                    FlashbackExportExtrasConfig.INSTANCE.exrExportAudio, settings.framerate(), settings.stereoAudio());
+                    exrAudio, settings.framerate(), settings.stereoAudio());
         }
         /*? if hdr {*/
         if (isHdrMode) {
@@ -193,18 +220,19 @@ public class MixinExportJob {
     @Unique
     private void flashbackexportextras$configureExportModes() {
         /*? if hdr {*/
-        isHdrMode = FlashbackExportExtrasConfig.INSTANCE.getExportMode() == ExportMode.HDR10
+        isHdrMode = exportMode == ExportMode.HDR10
                 && HdrExportState.isAvailable() && GpuExportBackendFactory.get().supportsHdr();
         /*?} else {*/
         /*isHdrMode = false;
         *//*?}*/
-        isExrMode = FlashbackExportExtrasConfig.INSTANCE.getExportMode() == ExportMode.EXR;
+        isExrMode = exportMode == ExportMode.EXR;
         isExrSceneLinearHdr = isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr
                 && HdrExportState.isAvailable()
                 && GpuExportBackendFactory.get().supportsSceneLinearHdr();
         // the layer is 8-bit sRGB like the scene: not with scene-linear HDR colour
-        isExrTranslucentLayer = isExrMode && !isExrSceneLinearHdr
-                && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED;
+        isExrTranslucentLayer = !isExrSceneLinearHdr && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED
+                && (isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer
+                    || render3d != null && render3d.translucentDepth() && render3d.depth());
         // Independent of Export Transparent, but only supported by the 26.3 HUD capture hook.
         isExrHudLayer = isExrMode && !settings.noGui() && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED;
         if (isExrMode && FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer && !isExrTranslucentLayer) {
@@ -250,10 +278,24 @@ public class MixinExportJob {
 
         ExportJob self = (ExportJob) (Object) this;
 
-        if (isExrMode) {
+        if (isExrMode || render3d != null) {
+            DepthCaptureState.linearizeWorldSpace = render3d == null
+                    ? FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace : render3d.linearize();
             DepthCaptureState.width = self.getWidth();
             DepthCaptureState.height = self.getHeight();
             DepthCaptureState.active = true;
+        }
+
+        if (render3d != null) {
+            try {
+                sidecarStaging = Files.createTempDirectory(sidecarDestination.getParent(), ".3d-render-");
+                sidecarWriter = ExrVideoWriter.dataSidecar(sidecarStaging, self.getWidth(), self.getHeight(),
+                        render3d.linearize(), render3d.compression(), isExrTranslucentLayer, render3d.depthBits(),
+                        render3d.depth(), render3d.mistDistance(), render3d.normal(),
+                        render3d.wave() && settings.recordAudio(), settings.framerate(), settings.stereoAudio());
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException("Could not open the 3D Render EXR output", e);
+            }
         }
 
         /*? if hdr {*/
@@ -284,7 +326,7 @@ public class MixinExportJob {
     private SaveableFramebuffer flashbackexportextras$reserveDepthFrame(
             SaveableFramebufferQueue downloader) {
         SaveableFramebuffer framebuffer = downloader.take();
-        if (isExrMode) {
+        if (isExrMode || render3d != null) {
             long frameId = DepthCaptureState.reserveExportFrameId();
             FlashbackExportExtras.LOGGER.debug("Reserved depth capture frame {}", frameId);
         }
@@ -301,7 +343,7 @@ public class MixinExportJob {
                                                         RenderTarget target,
                                                         SaveableFramebuffer framebuffer,
                                                         boolean flag) {
-        if (isExrMode) {
+        if (isExrMode || render3d != null) {
             long frameId = DepthCaptureState.submittedCaptureFrameId();
             if (frameId != flashbackexportextras_nextDepthColorFrameId
                     || !DepthCaptureState.wasCaptureSubmitted(frameId)) {
@@ -321,7 +363,7 @@ public class MixinExportJob {
                     DepthCaptureState.submittedCaptureFrameId());
         }
         *///?}
-        if (isExrMode) {
+        if (isExrMode || render3d != null) {
             // the camera of this frame, for the EXR header
             TranslucentCaptureState.putCamera(flashbackexportextras_nextDepthColorFrameId,
                     new TranslucentCaptureState.CameraInfo(DepthCaptureState.camX, DepthCaptureState.camY,
@@ -329,7 +371,7 @@ public class MixinExportJob {
                             DepthCaptureState.fovDegrees));
         }
         downloader.startDownload(target, framebuffer, flag);
-        if (isExrMode) {
+        if (isExrMode || render3d != null) {
             flashbackexportextras_nextDepthColorFrameId++;
         }
         flashbackexportextras$recordCameraFrame();
@@ -389,7 +431,7 @@ public class MixinExportJob {
 
     @Unique
     private void flashbackexportextrasFlushGpuReadback() {
-        if (!isExrMode && !isHdrMode) return;
+        if (!isExrMode && !isHdrMode && render3d == null) return;
         FlashbackExportExtras.LOGGER.info("Export GPU flush started: exr={}, hdr={}", isExrMode, isHdrMode);
         GpuExportBackendFactory.get().flush();
         //? if >=26.3 {
@@ -433,6 +475,14 @@ public class MixinExportJob {
             // release Flashback's normal SDR frame immediately.
             frame.close();
         } else {
+            if (sidecarWriter != null) {
+                try {
+                    sidecarWriter.encodeSidecarFrame(frame.audioBuffer);
+                } catch (RuntimeException | Error failure) {
+                    frame.close();
+                    throw failure;
+                }
+            }
             videoWriter.encode(frame);
         }
     }
@@ -448,6 +498,14 @@ public class MixinExportJob {
             // Normal pipeline's NativeImage is unused in HDR mode.
             image.close();
         } else {
+            if (sidecarWriter != null) {
+                try {
+                    sidecarWriter.encodeSidecarFrame(audioBuffer);
+                } catch (RuntimeException | Error failure) {
+                    image.close();
+                    throw failure;
+                }
+            }
             videoWriter.encode(image, audioBuffer);
         }
     }
@@ -464,9 +522,70 @@ public class MixinExportJob {
         boolean completed = false;
         try {
             doExport(videoWriter, downloader);
+            if (sidecarWriter != null) {
+                sidecarWriter.finishSequence(ignored -> { });
+                long frames = sidecarWriter.writtenFrames();
+                if (frames != flashbackexportextras_nextDepthColorFrameId) {
+                    throw new IllegalStateException("Video and 3D Render EXR frame counts differ");
+                }
+                if (frames == 0) flashbackexportextras$discardSidecar();
+            }
             completed = true;
         } finally {
-            flashbackexportextras$finishExportSession(completed);
+            if (sidecarWriter != null) {
+                flashbackexportextras$cleanupStep("3D Render writer", sidecarWriter::close);
+                sidecarWriter = null;
+            }
+            try {
+                flashbackexportextras$finishExportSession(completed);
+            } finally {
+                if (!completed) flashbackexportextras$discardSidecar();
+            }
+        }
+    }
+
+    @Redirect(method = "run", at = @At(value = "INVOKE",
+            target = "Ljava/nio/file/Files;move(Ljava/nio/file/Path;Ljava/nio/file/Path;[Ljava/nio/file/CopyOption;)Ljava/nio/file/Path;"),
+            remap = false)
+    private Path flashbackexportextras$publishSidecarAfterVideo(Path source, Path destination, CopyOption[] copyOptions)
+            throws IOException {
+        Path video;
+        try {
+            video = Files.move(source, destination, copyOptions);
+        } catch (IOException failure) {
+            flashbackexportextras$discardSidecar();
+            throw failure;
+        }
+        if (sidecarStaging != null) {
+            Path staging = sidecarStaging;
+            sidecarStaging = null;
+            Path folder = ExportSceneNames.availableFolder(sidecarDestination.getParent(),
+                    sidecarDestination.getFileName().toString());
+            try {
+                Files.move(staging, folder);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException("Video was saved, but its 3D Render EXRs are still in " + staging, e);
+            }
+            FlashbackExportExtras.LOGGER.info("3D Render EXRs for {}: {}", video, folder);
+        }
+        return video;
+    }
+
+    @Unique
+    private void flashbackexportextras$discardSidecar() {
+        Path staging = sidecarStaging;
+        sidecarStaging = null;
+        if (staging == null) return;
+        try (var files = Files.list(staging)) {
+            for (Path file : files.toList()) Files.deleteIfExists(file);
+        } catch (IOException e) {
+            FlashbackExportExtras.LOGGER.warn("Could not remove incomplete 3D Render EXRs in {}", staging, e);
+            return;
+        }
+        try {
+            Files.deleteIfExists(staging);
+        } catch (IOException e) {
+            FlashbackExportExtras.LOGGER.warn("Could not remove incomplete 3D Render folder {}", staging, e);
         }
     }
 

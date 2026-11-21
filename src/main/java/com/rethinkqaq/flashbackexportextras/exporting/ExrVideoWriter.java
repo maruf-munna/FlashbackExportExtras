@@ -58,7 +58,7 @@ public class ExrVideoWriter implements VideoWriter {
     private final CountDownLatch writerStopped = new CountDownLatch(WRITER_COUNT);
     private final AtomicReference<Throwable> writerFailure = new AtomicReference<>();
     private final Thread[] writerThreads = new Thread[WRITER_COUNT];
-    private final Deque<NativeImage> pendingColors = new ArrayDeque<>();
+    private final Deque<PendingFrame> pendingFrames = new ArrayDeque<>();
     private final boolean sceneLinearHdr;
     // Export Transparent: each frame also waits for its translucent split (TranslucentCaptureState)
     private final boolean translucentLayer;
@@ -66,6 +66,7 @@ public class ExrVideoWriter implements VideoWriter {
     private final boolean hudLayer;
     private final Path outputDir;
     private final boolean exportAudio;
+    private final boolean dataOnly;
     private final double fps;
     private final int audioChannels;
     private ExrWaveWriter wave;
@@ -91,6 +92,25 @@ public class ExrVideoWriter implements VideoWriter {
     public ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,
                           ExrCompression compression, boolean translucentLayer, boolean hudLayer,
                           int depthBits, boolean exportAudio, double fps, boolean stereoAudio) throws IOException {
+        this(outputDir, width, height, sceneLinearHdr, compression, translucentLayer, hudLayer, depthBits,
+                exportAudio, fps, stereoAudio, false, FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace,
+                FlashbackExportExtrasConfig.INSTANCE.exrExportDepth,
+                FlashbackExportExtrasConfig.INSTANCE.exrExportMist ? Math.max(1, FlashbackExportExtrasConfig.INSTANCE.exrMistDistance) : 0,
+                FlashbackExportExtrasConfig.INSTANCE.exrExportNormal);
+    }
+
+    public static ExrVideoWriter dataSidecar(Path outputDir, int width, int height, boolean linearize,
+            ExrCompression compression, boolean translucentDepth, int depthBits, boolean depth,
+            int mistDistance, boolean normal, boolean audio, double fps, boolean stereo) throws IOException {
+        return new ExrVideoWriter(outputDir, width, height, false, compression, translucentDepth,
+                false, depthBits, audio, fps, stereo, true, linearize, depth, mistDistance, normal);
+    }
+
+    private ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,
+                           ExrCompression compression, boolean translucentLayer, boolean hudLayer,
+                           int depthBits, boolean exportAudio, double fps, boolean stereoAudio,
+                           boolean dataOnly, boolean linearize, boolean depth, int mistDistance, boolean normal) throws IOException {
+        this.dataOnly = dataOnly;
         this.outputDir = outputDir;
         this.exportAudio = exportAudio;
         this.fps = fps;
@@ -104,12 +124,8 @@ public class ExrVideoWriter implements VideoWriter {
         try {
             for (int i = 0; i < WRITER_COUNT; i++) {
                 exrWriters[i] = new MultiLayerExrWriter(outputDir, width, height,
-                        FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace, sceneLinearHdr,
-                        compression, translucentLayer, this.hudLayer, depthBits,
-                        FlashbackExportExtrasConfig.INSTANCE.exrExportDepth,
-                        FlashbackExportExtrasConfig.INSTANCE.exrExportMist
-                                ? Math.max(1, FlashbackExportExtrasConfig.INSTANCE.exrMistDistance) : 0,
-                        FlashbackExportExtrasConfig.INSTANCE.exrExportNormal);
+                        linearize, sceneLinearHdr, compression, translucentLayer, this.hudLayer,
+                        depthBits, depth, mistDistance, normal, !dataOnly);
             }
         } catch (IOException | RuntimeException e) {
             for (MultiLayerExrWriter writer : exrWriters) {
@@ -160,29 +176,39 @@ public class ExrVideoWriter implements VideoWriter {
         wave.writeFrame(buffer, Math.round(audioFrameCount * ExrWaveWriter.SAMPLE_RATE / fps));
     }
 
+    /** Registers the same downloaded frame that will be submitted to the native video encoder. */
+    public void encodeSidecarFrame(FloatBuffer audioBuffer) {
+        if (!dataOnly) throw new IllegalStateException("Expected a data-only EXR writer");
+        encodeNative(null, audioBuffer);
+    }
+
+    public long writtenFrames() {
+        return encodedFrameCount;
+    }
+
     private void encodeNative(NativeImage colorImage, FloatBuffer audioBuffer) {
         if (!accepting) {
-            colorImage.close();
+            if (colorImage != null) colorImage.close();
             throw new IllegalStateException("EXR writer is already finished");
         }
         Throwable failure = writerFailure.get();
         if (failure != null) {
-            colorImage.close();
+            if (colorImage != null) colorImage.close();
             throw new IllegalStateException("EXR writer has failed", failure);
         }
 
         try {
             captureAudio(audioBuffer);
         } catch (IOException e) {
-            colorImage.close();
+            if (colorImage != null) colorImage.close();
             throw new java.io.UncheckedIOException("EXR audio capture failed", e);
         }
-        pendingColors.addLast(colorImage);
+        pendingFrames.addLast(new PendingFrame(colorImage));
         drainPairs();
     }
 
     private void drainPairs() {
-        while (!pendingColors.isEmpty()) {
+        while (!pendingFrames.isEmpty()) {
             DepthCaptureState.DepthFrame depthFrame;
             SceneLinearHdrCaptureState.ColorFrame hdrFrame = null;
             depthFrame = DepthCaptureState.peek(nextFrameId);
@@ -208,7 +234,7 @@ public class ExrVideoWriter implements VideoWriter {
             }
             TranslucentCaptureState.CameraInfo camera = TranslucentCaptureState.takeCamera(nextFrameId);
 
-            NativeImage colorImage = pendingColors.removeFirst();
+            NativeImage colorImage = pendingFrames.removeFirst().color();
             FramePacket packet = new FramePacket((int) nextFrameId++, colorImage, depthFrame,
                     hdrFrame == null ? null : hdrFrame.data, transFrame, hudFrame, camera);
             try {
@@ -226,9 +252,9 @@ public class ExrVideoWriter implements VideoWriter {
     }
 
     private void discardPendingColors() {
-        NativeImage color;
-        while ((color = pendingColors.pollFirst()) != null) {
-            color.close();
+        PendingFrame frame;
+        while ((frame = pendingFrames.pollFirst()) != null) {
+            if (frame.color() != null) frame.color().close();
         }
     }
 
@@ -272,7 +298,7 @@ public class ExrVideoWriter implements VideoWriter {
         try {
             if (sceneLinearHdr) SceneLinearHdrCaptureState.throwIfFailed();
             drainPairs();
-            if (!pendingColors.isEmpty()) {
+            if (!pendingFrames.isEmpty()) {
                 writerFailure.compareAndSet(null, new IllegalStateException(
                         "Missing matching " + (sceneLinearHdr ? "HDR color or " : "")
                                 + "depth data for EXR frame " + nextFrameId));
@@ -334,8 +360,8 @@ public class ExrVideoWriter implements VideoWriter {
             FlashbackExportExtras.LOGGER.error("EXR writer failed", failure);
             throw new IllegalStateException("OpenEXR export failed", failure);
         }
-        FlashbackExportExtras.LOGGER.info("EXR writer finished: encoded={}, pendingColors={}, pendingDepth={}",
-                encodedFrameCount, pendingColors.size(), DepthCaptureState.queuedFrameCount());
+        FlashbackExportExtras.LOGGER.info("EXR writer finished: encoded={}, pendingFrames={}, pendingDepth={}",
+                encodedFrameCount, pendingFrames.size(), DepthCaptureState.queuedFrameCount());
     }
 
     @Override
@@ -345,13 +371,18 @@ public class ExrVideoWriter implements VideoWriter {
     public void finish() {
         Consumer<String> statusConsumer = ignored -> { };
     /*?}*/
+        finishSequence(statusConsumer);
+    }
+
+    public void finishSequence(Consumer<String> statusConsumer) {
         // EXR uses the main Flashback export progress. Do not emit a second
         // progress phase for the camera path or the EXR writer queue.
         if (finished) return;
         try {
             finishInternal();
             if (!exportAudio || encodedFrameCount == 0) return;
-            if (FlashPlusAudioBridge.finish(outputDir.resolve("audio.wav"), encodedFrameCount, statusConsumer)) return;
+            if ((!dataOnly || FlashPlusAudioBridge.hasRecordedTracks())
+                    && FlashPlusAudioBridge.finish(outputDir.resolve("audio.wav"), encodedFrameCount, statusConsumer)) return;
             if (wave == null || audioFrameCount != encodedFrameCount) {
                 throw new IllegalStateException("Missing PCM audio for EXR sequence");
             }
@@ -382,6 +413,8 @@ public class ExrVideoWriter implements VideoWriter {
             wave = null;
         }
     }
+
+    private record PendingFrame(NativeImage color) { }
 
     private static final class FramePacket {
         private final int frameId;

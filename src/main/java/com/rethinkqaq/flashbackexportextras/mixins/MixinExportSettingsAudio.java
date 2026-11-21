@@ -24,7 +24,7 @@ package com.rethinkqaq.flashbackexportextras.mixins;
 import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.combo_options.VideoContainer;
 import com.moulberry.flashback.exporting.ExportSettings;
-import com.rethinkqaq.flashbackexportextras.FlashbackExportExtrasConfig;
+import com.rethinkqaq.flashbackexportextras.exporting.ExrAudioOutput;
 import com.rethinkqaq.flashbackexportextras.exporting.FlashPlusAudioBridge;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,11 +37,10 @@ public abstract class MixinExportSettingsAudio {
     @Inject(method = "recordAudio", at = @At("RETURN"), cancellable = true)
     private void flashbackexportextras$enableExrLoopback(CallbackInfoReturnable<Boolean> callback) {
         var settings = (ExportSettings) (Object) this;
-        var config = FlashbackExportExtrasConfig.INSTANCE;
-        if (Flashback.isExporting() && Flashback.EXPORT_JOB.getSettings() == settings
-                && settings.container() == VideoContainer.PNG_SEQUENCE
-                && config.getExportMode() == FlashbackExportExtrasConfig.ExportMode.EXR) {
-            callback.setReturnValue(config.exrExportAudio && !FlashPlusAudioBridge.hasRecordedTracks());
+        if (Flashback.isExporting() && Flashback.EXPORT_JOB instanceof ExrAudioOutput job
+                && Flashback.EXPORT_JOB.getSettings() == settings && settings.container() == VideoContainer.PNG_SEQUENCE) {
+            Boolean enabled = job.flashbackexportextras$exrAudio();
+            if (enabled != null) callback.setReturnValue(enabled && !FlashPlusAudioBridge.hasRecordedTracks());
         }
     }
 }

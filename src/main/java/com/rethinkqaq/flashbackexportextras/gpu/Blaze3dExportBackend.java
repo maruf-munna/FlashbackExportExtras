@@ -47,7 +47,6 @@ import com.mojang.blaze3d.systems.RenderPass;
 import net.minecraft.resources.ResourceLocation;
 //?}
 import com.rethinkqaq.flashbackexportextras.exporting.DepthCaptureState;
-import com.rethinkqaq.flashbackexportextras.FlashbackExportExtrasConfig;
 import com.rethinkqaq.flashbackexportextras.exporting.HdrExportState;
 import com.rethinkqaq.flashbackexportextras.exporting.HdrVideoCaptureState;
 import com.rethinkqaq.flashbackexportextras.exporting.SceneLinearHdrCaptureState;
@@ -241,7 +240,7 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
             throw new IllegalStateException("Missing source depth texture");
         }
         ensureDepthTarget(captureWidth, captureHeight);
-        boolean linearize = FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace;
+        boolean linearize = DepthCaptureState.linearizeWorldSpace;
         ByteBuffer parameters = ByteBuffer.allocateDirect(16).order(ByteOrder.nativeOrder());
         parameters.putFloat(0.05f).putFloat(depthFar)
                 .putFloat(reversed ? 1.0f : 0.0f)

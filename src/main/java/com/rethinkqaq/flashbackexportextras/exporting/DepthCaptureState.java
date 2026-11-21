@@ -42,6 +42,7 @@ public class DepthCaptureState {
 
     /** Render target dimensions for depth readback. */
     public static int width, height;
+    public static boolean linearizeWorldSpace = true;
 
     /** Far plane distance used during depth capture. */
     public static volatile float depthFar = 1000.0f;

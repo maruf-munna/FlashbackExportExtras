@@ -49,5 +49,13 @@
   "flashbackexportextras.exr_normal": "Geometric Normal pass",
   "flashbackexportextras.exr_normal_tooltip": "Blender-world geometric normals reconstructed from visible depth. Shader bump and normal maps are excluded.",
   "flashbackexportextras.prores_alpha": "Use ProRes 4444 with alpha (MOV)",
-  "flashbackexportextras.prores_alpha_tooltip": "Selects MOV and ProRes and turns off the replay sky for a transparent background."
+  "flashbackexportextras.prores_alpha_tooltip": "Selects MOV and ProRes and turns off the replay sky for a transparent background.",
+  "flashbackexportextras.format_3d": "3D Render",
+  "flashbackexportextras.format_3d_info": "One video with frame-matched data-only OpenEXRs. Use perspective projection. With SSAA, the EXRs retain the full render resolution.",
+  "flashbackexportextras.render_3d_folder": "EXR sidecar folder",
+  "flashbackexportextras.render_3d_folder_tooltip": "Leave blank to create <video name>_exr next to the movie.",
+  "flashbackexportextras.render_3d_wave": "Also write audio.wav",
+  "flashbackexportextras.render_3d_translucent": "Include Translucent Depth",
+  "flashbackexportextras.render_3d_no_passes": "Enable Depth, Mist or Geometric Normal for 3D Render.",
+  "flashbackexportextras.render_3d_wave_tooltip": "Uses the selected video audio source when Record Audio is enabled."
 }

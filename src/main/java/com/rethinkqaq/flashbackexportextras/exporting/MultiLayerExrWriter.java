@@ -82,6 +82,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
 
     private final int numChannels;
     private final boolean exportDepth;
+    private final boolean exportColor;
     private final ExrGeometryPasses geometry;
     private final int[] channelIndices;
     private final boolean translucentLayer;
@@ -146,17 +147,27 @@ public class MultiLayerExrWriter implements AutoCloseable {
                                boolean sceneLinearHdr, ExrCompression compression,
                                boolean translucentLayer, boolean hudLayer, int depthBits,
                                boolean exportDepth, int mistDistance, boolean exportNormal) throws IOException {
+        this(outputDir, width, height, linearizeDepth, sceneLinearHdr, compression,
+                translucentLayer, hudLayer, depthBits, exportDepth, mistDistance, exportNormal, true);
+    }
+
+    public MultiLayerExrWriter(Path outputDir, int width, int height, boolean linearizeDepth,
+                               boolean sceneLinearHdr, ExrCompression compression,
+                               boolean translucentLayer, boolean hudLayer, int depthBits,
+                               boolean exportDepth, int mistDistance, boolean exportNormal, boolean exportColor) throws IOException {
+        this.exportColor = exportColor;
         this.translucentLayer = translucentLayer;
         this.hudLayer = hudLayer;
         this.exportDepth = exportDepth;
         this.channelIndices = java.util.stream.IntStream.range(0, CHANNEL_NAMES.length)
-                .filter(i -> (i < 4 || i == 4 && exportDepth
-                        || i >= 5 && i <= 8 && translucentLayer
+                .filter(i -> (i < 4 && exportColor || i == 4 && exportDepth
+                        || i >= 5 && i <= 8 && translucentLayer && exportColor
                         || i == 9 && translucentLayer && exportDepth
                         || i >= 10 && i <= 13 && hudLayer
                         || i == 14 && mistDistance > 0 || i >= 15 && exportNormal))
                 .boxed().sorted(java.util.Comparator.comparing(i -> CHANNEL_NAMES[i]))
                 .mapToInt(Integer::intValue).toArray();
+        if (channelIndices.length == 0) throw new IllegalArgumentException("No OpenEXR passes selected");
         this.depthBits = Math.max(10, Math.min(23, depthBits));
         this.numChannels = channelIndices.length;
         final int NUM_CHANNELS = numChannels;
@@ -177,16 +188,16 @@ public class MultiLayerExrWriter implements AutoCloseable {
         this.geometry = new ExrGeometryPasses(width, height, mistDistance, exportNormal);
 
         // --- Pre-allocate pixel buffers (5 × width × height × 4 bytes) ---
-        this.rBuf = MemoryUtil.memAllocFloat(pixelCount);
-        this.gBuf = MemoryUtil.memAllocFloat(pixelCount);
-        this.bBuf = MemoryUtil.memAllocFloat(pixelCount);
-        this.aBuf = MemoryUtil.memAllocFloat(pixelCount);
+        this.rBuf = exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.gBuf = exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.bBuf = exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.aBuf = exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.zBuf = exportDepth ? MemoryUtil.memAllocFloat(pixelCount) : null;
-        this.trBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
-        this.tgBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
-        this.tbBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
-        this.taBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
-        this.tzBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.trBuf = translucentLayer && exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.tgBuf = translucentLayer && exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.tbBuf = translucentLayer && exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.taBuf = translucentLayer && exportColor ? MemoryUtil.memAllocFloat(pixelCount) : null;
+        this.tzBuf = translucentLayer && exportDepth ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.urBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.ugBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.ubBuf = this.hudLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
@@ -267,11 +278,13 @@ public class MultiLayerExrWriter implements AutoCloseable {
         fillHud(hud);
         frameSplit = translucentLayer && trans != null && trans.hasSplit();
         if (frameSplit) {
-            fillRgba8BottomUp(trans.solid, rBuf, gBuf, bBuf, aBuf, true);
-            fillRgba8BottomUp(trans.layer, trBuf, tgBuf, tbBuf, taBuf, false);
+            if (exportColor) {
+                fillRgba8BottomUp(trans.solid, rBuf, gBuf, bBuf, aBuf, true);
+                fillRgba8BottomUp(trans.layer, trBuf, tgBuf, tbBuf, taBuf, false);
+            }
             if (exportDepth) fillTransDepth(trans);
         } else {
-            fillSdrColor(colorImage);
+            if (exportColor) fillSdrColor(colorImage);
             if (translucentLayer) {
                 clearTranslucent(depthFrame);
             }
@@ -328,11 +341,13 @@ public class MultiLayerExrWriter implements AutoCloseable {
         float far = encodeReversedDepth(0.0f, 0.05f, depthFrame == null ? 1000.0f : depthFrame.zFar);
         int pixelCount = width * height;
         for (int i = 0; i < pixelCount; i++) {
-            trBuf.put(i, 0.0f);
-            tgBuf.put(i, 0.0f);
-            tbBuf.put(i, 0.0f);
-            taBuf.put(i, 0.0f);
-            tzBuf.put(i, quantize(far));
+            if (exportColor) {
+                trBuf.put(i, 0.0f);
+                tgBuf.put(i, 0.0f);
+                tbBuf.put(i, 0.0f);
+                taBuf.put(i, 0.0f);
+            }
+            if (exportDepth) tzBuf.put(i, quantize(far));
         }
     }
 
@@ -540,6 +555,14 @@ public class MultiLayerExrWriter implements AutoCloseable {
         if (!exportDepth) layers = layers.replace(", Depth (solid)", "").replace(", Depth", "").replace(", TransDepth", "");
         if (geometry.mist != null) layers += ", Mist (0 to " + geometry.mistDistance + " blocks)";
         if (geometry.nx != null) layers += ", Normal (geometric, Blender world space)";
+        if (!exportColor) {
+            var dataLayers = new ArrayList<String>();
+            if (exportDepth) dataLayers.add(frameSplit ? "Depth (solid)" : "Depth");
+            if (translucentLayer && exportDepth) dataLayers.add(frameSplit ? "TransDepth" : "TransDepth (empty)");
+            if (geometry.mist != null) dataLayers.add("Mist (0 to " + geometry.mistDistance + " blocks)");
+            if (geometry.nx != null) dataLayers.add("Normal (geometric, Blender world space)");
+            layers = String.join(", ", dataLayers);
+        }
         String depthEncoding = exportDepth ? (linearizeDepth ? "linear_blocks" : "ndc") : null;
         String[] values = camera == null
                 ? new String[] {Integer.toString(frameNumber), null, null, null, layers, depthEncoding}

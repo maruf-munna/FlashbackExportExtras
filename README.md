@@ -23,6 +23,13 @@ English | [中文](README_zh.md)
 
 OpenEXR output is mainly intended for compositing and post-processing in Blender, After Effects, and other software. Color, depth, and camera path data are exported with matching frame numbers for per-frame alignment.
 
+## 3D Render
+
+Choose **3D Render** in the export window, then select the video container and codec and enable the EXR passes you need.
+It writes the video and a sibling `<video name>_exr` folder with frame-matched data-only EXRs. Import the video as the
+color footage and start the EXR sequence on the same frame as the video. The first EXR is `0000.exr`. With SSAA enabled, the
+EXR data retains the render resolution. Perspective projection is required.
+
 ## Build and deploy to an instance
 
 Set `minecraft_instance_dir` in `versions/<version>/gradle.properties` to the root folder of your Minecraft or Modrinth instance. Quotes around a path with spaces are optional. The task creates the instance's `mods` folder if needed, removes only older jars of this mod, and copies in the freshly remapped jar.

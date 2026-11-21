@@ -107,6 +107,25 @@ class MultiLayerExrWriterTest {
         }
     }
 
+    @Test void dataSidecarWritesNoColorChannels() throws Exception {
+        FloatBuffer depth = MemoryUtil.memAllocFloat(9);
+        try {
+            for (int i = 0; i < 9; i++) depth.put(i, 8);
+            var frame = new DepthCaptureState.DepthFrame(0, depth, 0.05f, 256,
+                    DepthCaptureState.Encoding.LINEAR_WORLD_METERS, "fixture");
+            var camera = new TranslucentCaptureState.CameraInfo(0, 0, 0, 0, 0, 60);
+            try (var writer = new MultiLayerExrWriter(output, 3, 3, true, false,
+                    ExrCompression.ZIP, true, false, 23, true, 16, true, false)) {
+                writer.writeFrame(null, frame, null, null, camera, 0);
+            }
+            assertEquals(List.of("View Layer.Depth.Z", "View Layer.Mist.Z", "View Layer.Normal.X",
+                    "View Layer.Normal.Y", "View Layer.Normal.Z", "View Layer.TransDepth.Z"),
+                    channels(Files.readAllBytes(output.resolve("0000.exr"))));
+        } finally {
+            MemoryUtil.memFree(depth);
+        }
+    }
+
     private static String cstring(ByteBuffer data) {
         StringBuilder text = new StringBuilder();
         byte next;

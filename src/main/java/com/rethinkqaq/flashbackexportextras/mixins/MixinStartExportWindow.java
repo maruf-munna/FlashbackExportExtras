@@ -23,7 +23,9 @@ package com.rethinkqaq.flashbackexportextras.mixins;
 
 import com.moulberry.flashback.configuration.FlashbackConfigV1;
 import com.moulberry.flashback.combo_options.VideoCodec;
+import com.moulberry.flashback.combo_options.VideoContainer;
 import com.moulberry.flashback.state.EditorState;
+import com.rethinkqaq.flashbackexportextras.FlashbackExportExtras;
 import com.rethinkqaq.flashbackexportextras.FlashbackExportExtrasConfig;
 import com.rethinkqaq.flashbackexportextras.FlashbackExportExtrasConfig.ExportMode;
 import com.rethinkqaq.flashbackexportextras.exporting.CameraPathExporter;
@@ -37,6 +39,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.concurrent.CompletableFuture;
@@ -54,6 +57,7 @@ import com.moulberry.flashback.exporting.ExportSettings;
 public class MixinStartExportWindow {
     private static final ImString EXR_OUTPUT_NAME = new ImString("", 128);
     private static boolean exrOutputNameInitialized;
+    private static final ImString SIDECAR_NAME = new ImString("", 128);
     private static final DateTimeFormatter EXR_DEFAULT_NAME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'_HH_mm");
 
@@ -61,6 +65,8 @@ public class MixinStartExportWindow {
     @Inject(method = "open", at = @At("HEAD"), remap = false)
     private static void flashbackexportextras$resetOutputNameOnOpen(CallbackInfo ci) {
         exrOutputNameInitialized = false;
+        String folder = FlashbackExportExtrasConfig.INSTANCE.render3dOutputName;
+        SIDECAR_NAME.set(folder == null ? "" : folder);
     }
 
     // Folder dialogs may return a drive root, whose parent is null. Remember the root itself in that case.
@@ -81,18 +87,28 @@ public class MixinStartExportWindow {
         ImGui.text(I18n.get("flashbackexportextras.export_format") + ":");
         ImGui.sameLine();
 
-        boolean isExr = FlashbackExportExtrasConfig.INSTANCE.getExportMode() == ExportMode.EXR;
-        if (ImGui.radioButton(I18n.get("flashbackexportextras.format_video"), !isExr)) {
+        var extras = FlashbackExportExtrasConfig.INSTANCE;
+        ExportMode selected = extras.getExportMode();
+        if (ImGui.radioButton(I18n.get("flashbackexportextras.format_video"),
+                selected == ExportMode.VIDEO || selected == ExportMode.HDR10)) {
             FlashbackExportExtrasConfig.INSTANCE.setExportMode(ExportMode.VIDEO);
             FlashbackExportExtrasConfig.save();
         }
         ImGui.sameLine();
-        if (ImGui.radioButton(I18n.get("flashbackexportextras.format_exr"), isExr)) {
+        if (ImGui.radioButton(I18n.get("flashbackexportextras.format_exr"), selected == ExportMode.EXR)) {
             FlashbackExportExtrasConfig.INSTANCE.setExportMode(ExportMode.EXR);
             FlashbackExportExtrasConfig.save();
         }
 
-        if (FlashbackExportExtrasConfig.INSTANCE.getExportMode() == ExportMode.EXR) {
+        ImGui.sameLine();
+        if (ImGui.radioButton(I18n.get("flashbackexportextras.format_3d"), selected == ExportMode.RENDER_3D)) {
+            extras.setExportMode(ExportMode.RENDER_3D);
+            FlashbackExportExtrasConfig.save();
+        }
+
+        boolean isExr = extras.getExportMode() == ExportMode.EXR;
+        boolean is3d = extras.getExportMode() == ExportMode.RENDER_3D;
+        if (isExr) {
             // Force container to PNG_SEQUENCE (triggers folder picker)
             config.internalExport.container =
                     com.moulberry.flashback.combo_options.VideoContainer.PNG_SEQUENCE;
@@ -116,11 +132,27 @@ public class MixinStartExportWindow {
 
             // Force SSAA off
             config.internalExport.ssaa = false;
+        }
 
+        if (is3d) {
+            ImGui.spacing();
+            ImGui.textWrapped(I18n.get("flashbackexportextras.format_3d_info"));
+            if (ImGui.inputText(I18n.get("flashbackexportextras.render_3d_folder"), SIDECAR_NAME)) {
+                extras.render3dOutputName = SIDECAR_NAME.get().strip();
+                FlashbackExportExtrasConfig.save();
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.render_3d_folder_tooltip"));
+            if (ImGui.checkbox(I18n.get("flashbackexportextras.render_3d_wave"), extras.render3dExportAudio)) {
+                extras.render3dExportAudio = !extras.render3dExportAudio;
+                FlashbackExportExtrasConfig.save();
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.render_3d_wave_tooltip"));
+        }
+
+        if (isExr || is3d) {
             ImGui.spacing();
 
-
-            if (!exrOutputNameInitialized) {
+            if (isExr && !exrOutputNameInitialized) {
                 String configuredName = FlashbackExportExtrasConfig.INSTANCE.exrOutputName == null
                         ? "" : FlashbackExportExtrasConfig.INSTANCE.exrOutputName.trim();
                 if (configuredName.isEmpty()
@@ -133,21 +165,19 @@ public class MixinStartExportWindow {
                 EXR_OUTPUT_NAME.set(configuredName);
                 exrOutputNameInitialized = true;
             }
-            if (ImGui.inputText(I18n.get("flashbackexportextras.exr_output_name"), EXR_OUTPUT_NAME)) {
+            if (isExr && ImGui.inputText(I18n.get("flashbackexportextras.exr_output_name"), EXR_OUTPUT_NAME)) {
                 FlashbackExportExtrasConfig.INSTANCE.exrOutputName = EXR_OUTPUT_NAME.get().trim();
                 FlashbackExportExtrasConfig.INSTANCE.exrOutputNameAutoGenerated = false;
                 FlashbackExportExtrasConfig.save();
             }
-            if (ImGui.isItemHovered()) {
-                ImGui.setTooltip(I18n.get("flashbackexportextras.exr_output_name_tooltip"));
+            if (isExr) {
+                if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.exr_output_name_tooltip"));
+                if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_audio"), extras.exrExportAudio)) {
+                    extras.exrExportAudio = !extras.exrExportAudio;
+                    FlashbackExportExtrasConfig.save();
+                }
+                if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.exr_audio_tooltip"));
             }
-
-            var extras = FlashbackExportExtrasConfig.INSTANCE;
-            if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_audio"), extras.exrExportAudio)) {
-                extras.exrExportAudio = !extras.exrExportAudio;
-                FlashbackExportExtrasConfig.save();
-            }
-            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.exr_audio_tooltip"));
 
             if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_mist"), extras.exrExportMist)) {
                 extras.exrExportMist = !extras.exrExportMist;
@@ -188,26 +218,38 @@ public class MixinStartExportWindow {
             }
 
             // Export Transparent: glass / water / particles / clouds as their own layer (Trans + TransDepth)
-            boolean translucent = FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer;
-            if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_translucent_layer"), translucent)) {
-                FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer = !translucent;
-                FlashbackExportExtrasConfig.save();
-            }
-            if (ImGui.isItemHovered()) {
-                ImGui.setTooltip(I18n.get("flashbackexportextras.exr_translucent_layer_tooltip"));
-            }
-            if (FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer) {
-                if (!com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED) {
-                    ImGui.textColored(1.0f, 0.6f, 0.2f, 1.0f, I18n.get("flashbackexportextras.exr_translucent_layer_unsupported"));
+            if (is3d) {
+                if (exportDepth && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED
+                        && ImGui.checkbox(I18n.get("flashbackexportextras.render_3d_translucent"), extras.render3dTranslucentDepth)) {
+                    extras.render3dTranslucentDepth = !extras.render3dTranslucentDepth;
+                    FlashbackExportExtrasConfig.save();
                 }
-                //? if >=26.3 {
-                /*else if (!net.minecraft.client.Minecraft.getInstance().options.improvedTransparency().get()) {
-                    ImGui.textColored(1.0f, 0.6f, 0.2f, 1.0f, I18n.get("flashbackexportextras.exr_translucent_layer_no_oit"));
+                if (!exportDepth && !extras.exrExportMist && !extras.exrExportNormal) {
+                    ImGui.textWrapped(I18n.get("flashbackexportextras.render_3d_no_passes"));
                 }
-                *///?}
+            } else {
+                boolean translucent = FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer;
+                if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_translucent_layer"), translucent)) {
+                    FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer = !translucent;
+                    FlashbackExportExtrasConfig.save();
+                }
+                if (ImGui.isItemHovered()) {
+                    ImGui.setTooltip(I18n.get("flashbackexportextras.exr_translucent_layer_tooltip"));
+                }
+                if (FlashbackExportExtrasConfig.INSTANCE.exrTranslucentLayer) {
+                    if (!com.rethinkqaq.flashbackexportextras.FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED) {
+                        ImGui.textColored(1.0f, 0.6f, 0.2f, 1.0f, I18n.get("flashbackexportextras.exr_translucent_layer_unsupported"));
+                    }
+                    //? if >=26.3 {
+                    /*else if (!net.minecraft.client.Minecraft.getInstance().options.improvedTransparency().get()) {
+                        ImGui.textColored(1.0f, 0.6f, 0.2f, 1.0f, I18n.get("flashbackexportextras.exr_translucent_layer_no_oit"));
+                    }
+                    *///?}
+                }
+
+                // Depth precision: 16 mantissa bits like the Flashplus converter (smaller), or lossless float
             }
 
-            // Depth precision: 16 mantissa bits like the Flashplus converter (smaller), or lossless float
             if (exportDepth) {
                 boolean depth16 = FlashbackExportExtrasConfig.INSTANCE.exrDepthBits < 23;
                 if (ImGui.beginCombo(I18n.get("flashbackexportextras.exr_depth_bits"), I18n.get(depth16
@@ -257,31 +299,35 @@ public class MixinStartExportWindow {
                 ImGui.setTooltip(I18n.get("flashbackexportextras.exr_compression_tooltip"));
             }
 
-            /*? if hdr {*/
-            boolean sceneLinearHdrAvailable = HdrExportState.isAvailable()
-                    && GpuExportBackendFactory.get().supportsSceneLinearHdr();
-            if (sceneLinearHdrAvailable) {
-                boolean sceneLinearHdr = FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr;
-                if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_scene_linear_hdr"), sceneLinearHdr)) {
-                    FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr = !sceneLinearHdr;
-                    FlashbackExportExtrasConfig.save();
+            if (isExr) {
+                /*? if hdr {*/
+                boolean sceneLinearHdrAvailable = HdrExportState.isAvailable()
+                        && GpuExportBackendFactory.get().supportsSceneLinearHdr();
+                if (sceneLinearHdrAvailable) {
+                    boolean sceneLinearHdr = FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr;
+                    if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_scene_linear_hdr"), sceneLinearHdr)) {
+                        FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr = !sceneLinearHdr;
+                        FlashbackExportExtrasConfig.save();
+                    }
+                    if (ImGui.isItemHovered()) {
+                        ImGui.setTooltip(I18n.get("flashbackexportextras.exr_scene_linear_hdr_tooltip"));
+                    }
+                } else if (FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr) {
+                    ImGui.textWrapped(I18n.get("flashbackexportextras.exr_scene_linear_hdr_unavailable"));
                 }
-                if (ImGui.isItemHovered()) {
-                    ImGui.setTooltip(I18n.get("flashbackexportextras.exr_scene_linear_hdr_tooltip"));
-                }
-            } else if (FlashbackExportExtrasConfig.INSTANCE.exrSceneLinearHdr) {
-                ImGui.textWrapped(I18n.get("flashbackexportextras.exr_scene_linear_hdr_unavailable"));
-            }
-            /*?}*/
+                /*?}*/
 
-            // Skip normal renderVideoOptions (container dropdown, codecs, bitrate)
-            ci.cancel();
-            return;
+                // Skip normal renderVideoOptions (container dropdown, codecs, bitrate)
+                ci.cancel();
+                return;
+            }
         }
 
         if (editorState != null && ImGui.button(I18n.get("flashbackexportextras.prores_alpha"))) {
-            FlashbackExportExtrasConfig.INSTANCE.setExportMode(ExportMode.VIDEO);
-            FlashbackExportExtrasConfig.save();
+            if (!is3d) {
+                extras.setExportMode(ExportMode.VIDEO);
+                FlashbackExportExtrasConfig.save();
+            }
             editorState.replayVisuals.renderSky = false;
             config.internalExport.transparentBackground = true;
             config.internalExport.container = com.moulberry.flashback.combo_options.VideoContainer.MOV;
@@ -297,7 +343,7 @@ public class MixinStartExportWindow {
 
         /*? if hdr {*/
         // === HDR Export option (only shown when HDR Mod is available) ===
-        if (HdrExportState.isAvailable() && GpuExportBackendFactory.get().supportsHdr()) {
+        if (!is3d && HdrExportState.isAvailable() && GpuExportBackendFactory.get().supportsHdr()) {
             ImGui.spacing();
             boolean hdr = FlashbackExportExtrasConfig.INSTANCE.getExportMode() == ExportMode.HDR10;
             if (ImGui.checkbox(I18n.get("flashbackexportextras.hdr_export"), hdr)) {
@@ -332,6 +378,13 @@ public class MixinStartExportWindow {
             }
         }
         /*?}*/
+    }
+
+    @ModifyVariable(method = "renderVideoOptions", at = @At("STORE"), ordinal = 0, remap = false, require = 0)
+    private static VideoContainer[] flashbackexportextras$onlyVideoContainersIn3d(VideoContainer[] containers) {
+        if (FlashbackExportExtrasConfig.INSTANCE.getExportMode() != ExportMode.RENDER_3D) return containers;
+        return java.util.Arrays.stream(containers)
+                .filter(container -> !container.name().endsWith("_SEQUENCE")).toArray(VideoContainer[]::new);
     }
 
     // === Camera path options: injected before the start/queue buttons ===

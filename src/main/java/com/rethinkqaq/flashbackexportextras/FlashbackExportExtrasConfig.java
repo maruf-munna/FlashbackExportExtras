@@ -54,6 +54,9 @@ public class FlashbackExportExtrasConfig {
 
     /** Write one frame-aligned 48 kHz WAV next to the EXR frames. */
     public boolean exrExportAudio = true;
+    public boolean render3dExportAudio = false;
+    public boolean render3dTranslucentDepth = false;
+    public String render3dOutputName = "";
 
     public boolean exrExportMist = false;
     public int exrMistDistance = 128;
@@ -101,6 +104,7 @@ public class FlashbackExportExtrasConfig {
     public enum ExportMode {
         VIDEO,
         EXR,
+        RENDER_3D,
         HDR10
     }
 

@@ -49,5 +49,13 @@
   "flashbackexportextras.exr_normal": "几何法线通道",
   "flashbackexportextras.exr_normal_tooltip": "使用可见深度重建 Blender 世界空间的几何法线，不包含着色器法线贴图。",
   "flashbackexportextras.prores_alpha": "使用带 Alpha 的 ProRes 4444（MOV）",
-  "flashbackexportextras.prores_alpha_tooltip": "选择 MOV 和 ProRes，并关闭回放天空以获得透明背景。"
+  "flashbackexportextras.prores_alpha_tooltip": "选择 MOV 和 ProRes，并关闭回放天空以获得透明背景。",
+  "flashbackexportextras.format_3d": "3D 渲染",
+  "flashbackexportextras.format_3d_info": "同时导出视频和帧同步的纯数据 OpenEXR。请使用透视投影。开启 SSAA 时，EXR 保留完整渲染分辨率。",
+  "flashbackexportextras.render_3d_folder": "EXR 文件夹",
+  "flashbackexportextras.render_3d_folder_tooltip": "留空时在视频旁创建 <视频名称>_exr。",
+  "flashbackexportextras.render_3d_wave": "同时写入 audio.wav",
+  "flashbackexportextras.render_3d_translucent": "包含半透明深度",
+  "flashbackexportextras.render_3d_no_passes": "请开启深度、雾效或几何法线通道。",
+  "flashbackexportextras.render_3d_wave_tooltip": "启用录制音频后，使用所选的视频音频源。"
 }
