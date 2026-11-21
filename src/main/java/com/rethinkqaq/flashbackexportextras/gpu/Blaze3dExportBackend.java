@@ -106,7 +106,7 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
     // (captureHandDepth after the hand is drawn, else endFrame) so hand pixels can become the near plane.
     private boolean depthPending;
     private int pendingDepthIndex;
-    private boolean pendingDepthReversed;
+    private boolean pendingDepthOverlayHand;
     private boolean pendingDepthLinear;
     private RenderPipeline handDepthPipeline;
     private GpuBuffer handUniformBuffer;
@@ -173,11 +173,18 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
             if (texture == null || textureView == null) {
                 throw new IllegalStateException("Missing 26.2 depth texture view");
             }
-            boolean reversed = !com.rethinkqaq.flashbackexportextras.exporting.IrisDepthCaptureState
+            boolean iris = com.rethinkqaq.flashbackexportextras.exporting.IrisDepthCaptureState
                     .isShaderPackPipelineActive();
+            //? if >=26.3 {
+            // Iris transforms shaderpack depth reads to standard-Z. The actual main attachment is still reversed-Z.
+            boolean reversed = true;
+            //?}
+            //? if <26.3 {
+            boolean reversed = !iris;
+            //?}
+            String source = (iris ? "Iris" : "Minecraft") + (reversed ? " reversed-Z depth" : " standard-Z depth");
             captureDepth26_2(encoder, texture, textureView, width, height, depthFar, frameId, index,
-                    reversed, reversed ? "Minecraft 26.2 reversed-Z depth"
-                            : "Iris shaderpack main depth (standard-Z)");
+                    reversed, !iris, source);
             if (ownsEncoder) encoder.submit();
             //?}
             //? if <26.2 {
@@ -229,7 +236,7 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
 
     private void captureDepth26_2(CommandEncoder encoder, GpuTexture sourceTexture, GpuTextureView sourceView,
                                     int captureWidth, int captureHeight, float depthFar,
-                                    long frameId, int index, boolean reversed, String source) {
+                                    long frameId, int index, boolean reversed, boolean overlayHand, String source) {
         if (sourceTexture == null || sourceView == null) {
             throw new IllegalStateException("Missing source depth texture");
         }
@@ -258,7 +265,7 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
         // read back after the hand (captureHandDepth), else at the end of the frame
         depthPending = true;
         pendingDepthIndex = index;
-        pendingDepthReversed = reversed;
+        pendingDepthOverlayHand = overlayHand;
         pendingDepthLinear = linearize;
     }
 
@@ -279,7 +286,7 @@ public final class Blaze3dExportBackend implements GpuExportBackend {
         long frameId = depthFrameIds[index];
         try {
             CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-            if (handTexture != null && pendingDepthReversed) {
+            if (handTexture != null && pendingDepthOverlayHand) {
                 overlayHandDepth(encoder, handTexture, pendingDepthLinear ? 0.05f : 0.0f);
             }
             encoder.copyTextureToBuffer(depthCopyTexture, depthBuffers[index], 0L, () -> {}, 0);

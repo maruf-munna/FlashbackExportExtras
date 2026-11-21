@@ -52,6 +52,13 @@ public class FlashbackExportExtrasConfig {
     /** Include Depth.Z and TransDepth.Z in EXR sequences; other export modes are unaffected. */
     public boolean exrExportDepth = true;
 
+    /** Write one frame-aligned 48 kHz WAV next to the EXR frames. */
+    public boolean exrExportAudio = true;
+
+    public boolean exrExportMist = false;
+    public int exrMistDistance = 128;
+    public boolean exrExportNormal = false;
+
     /** True = preserve scene-linear Rec.709 HDR color in OpenEXR output. */
     public boolean exrSceneLinearHdr = false;
 

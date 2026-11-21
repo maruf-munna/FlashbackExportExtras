@@ -38,7 +38,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.concurrent.CompletableFuture;
 import java.time.LocalDateTime;
@@ -53,12 +52,6 @@ import com.moulberry.flashback.exporting.ExportSettings;
  */
 @Mixin(value = com.moulberry.flashback.editor.ui.windows.StartExportWindow.class, remap = false)
 public class MixinStartExportWindow {
-    @Inject(method = "getDefaultFilename", at = @At("RETURN"), cancellable = true, remap = false, require = 0)
-    private static void flashbackexportextras$sceneVideoName(String replayName, String extension,
-            FlashbackConfigV1 config, CallbackInfoReturnable<String> result) {
-        result.setReturnValue(ExportSceneNames.videoName(result.getReturnValue(), extension));
-    }
-
     private static final ImString EXR_OUTPUT_NAME = new ImString("", 128);
     private static boolean exrOutputNameInitialized;
     private static final DateTimeFormatter EXR_DEFAULT_NAME_FORMAT =
@@ -148,6 +141,30 @@ public class MixinStartExportWindow {
             if (ImGui.isItemHovered()) {
                 ImGui.setTooltip(I18n.get("flashbackexportextras.exr_output_name_tooltip"));
             }
+
+            var extras = FlashbackExportExtrasConfig.INSTANCE;
+            if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_audio"), extras.exrExportAudio)) {
+                extras.exrExportAudio = !extras.exrExportAudio;
+                FlashbackExportExtrasConfig.save();
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.exr_audio_tooltip"));
+
+            if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_mist"), extras.exrExportMist)) {
+                extras.exrExportMist = !extras.exrExportMist;
+                FlashbackExportExtrasConfig.save();
+            }
+            if (extras.exrExportMist) {
+                int[] distance = {extras.exrMistDistance};
+                if (ImGui.sliderInt(I18n.get("flashbackexportextras.exr_mist_distance"), distance, 1, 1024)) {
+                    extras.exrMistDistance = distance[0];
+                    FlashbackExportExtrasConfig.save();
+                }
+            }
+            if (ImGui.checkbox(I18n.get("flashbackexportextras.exr_normal"), extras.exrExportNormal)) {
+                extras.exrExportNormal = !extras.exrExportNormal;
+                FlashbackExportExtrasConfig.save();
+            }
+            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.exr_normal_tooltip"));
 
             boolean exportDepth = FlashbackExportExtrasConfig.INSTANCE.exrExportDepth;
             if (ImGui.checkbox("Include Depth", exportDepth)) {
@@ -261,6 +278,22 @@ public class MixinStartExportWindow {
             ci.cancel();
             return;
         }
+
+        if (editorState != null && ImGui.button(I18n.get("flashbackexportextras.prores_alpha"))) {
+            FlashbackExportExtrasConfig.INSTANCE.setExportMode(ExportMode.VIDEO);
+            FlashbackExportExtrasConfig.save();
+            editorState.replayVisuals.renderSky = false;
+            config.internalExport.transparentBackground = true;
+            config.internalExport.container = com.moulberry.flashback.combo_options.VideoContainer.MOV;
+            config.internalExport.videoCodec = VideoCodec.PRO_RES;
+            //? if flashback_encoder_name {
+            /*config.internalExport.selectedVideoEncoder = "prores_ks";
+            *///?} else {
+            int index = java.util.Arrays.asList(VideoCodec.PRO_RES.getEncoders()).indexOf("prores_ks");
+            config.internalExport.selectedVideoEncoder = new int[]{Math.max(0, index)};
+            //?}
+        }
+        if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("flashbackexportextras.prores_alpha_tooltip"));
 
         /*? if hdr {*/
         // === HDR Export option (only shown when HDR Mod is available) ===

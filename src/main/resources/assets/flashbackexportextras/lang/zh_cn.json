@@ -41,5 +41,13 @@
   "flashbackexportextras.hdr_peak_brightness": "峰值亮度 (nits)",
   "flashbackexportextras.hdr_peak_brightness_tooltip": "PQ 编码用的最大显示亮度。\n默认：1000 nits (HDR10 标准)。HDR 显示器更亮可调高。",
   "flashbackexportextras.hdr_paper_white": "纸白亮度 (nits)",
-  "flashbackexportextras.hdr_paper_white_tooltip": "SDR 参考白电平。场景中的漫反射白色\n对应此亮度。默认：203 nits。"
+  "flashbackexportextras.hdr_paper_white_tooltip": "SDR 参考白电平。场景中的漫反射白色\n对应此亮度。默认：203 nits。",
+  "flashbackexportextras.exr_audio": "烘焙帧同步音频（WAV）",
+  "flashbackexportextras.exr_audio_tooltip": "将所选录音混合为一个 WAV，或使用 Flashback 的定位音频。将 audio.wav 放置在 EXR 第 0 帧。",
+  "flashbackexportextras.exr_mist": "雾效通道",
+  "flashbackexportextras.exr_mist_distance": "雾效结束距离（方块）",
+  "flashbackexportextras.exr_normal": "几何法线通道",
+  "flashbackexportextras.exr_normal_tooltip": "使用可见深度重建 Blender 世界空间的几何法线，不包含着色器法线贴图。",
+  "flashbackexportextras.prores_alpha": "使用带 Alpha 的 ProRes 4444（MOV）",
+  "flashbackexportextras.prores_alpha_tooltip": "选择 MOV 和 ProRes，并关闭回放天空以获得透明背景。"
 }

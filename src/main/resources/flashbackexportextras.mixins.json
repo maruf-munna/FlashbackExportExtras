@@ -9,6 +9,7 @@
     "DirectStateAccessInvoker",
     "MixinGlCommandEncoderDepthCopy",
     "MixinIrisRenderingPipeline",
+    "MixinIrisHandRenderer",
     "MixinIrisGlDevicePipelineBypass",
     "AsyncFileDialogsAccessor",
     "MixinMinecraftShutdown",
@@ -21,6 +22,7 @@
   ],
   "mixins": [
     "MixinExportJob",
+    "MixinExportSettingsAudio",
     "ExportJobTempFileInfoAccess",
     "MixinHDRModConfig",
     "MixinHdrModColorTransformRenderer"

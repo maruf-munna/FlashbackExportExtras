@@ -41,5 +41,13 @@
   "flashbackexportextras.hdr_peak_brightness": "Peak Brightness (nits)",
   "flashbackexportextras.hdr_peak_brightness_tooltip": "Maximum display luminance for PQ encoding.\nDefault: 1000 nits (HDR10 standard). Increase for brighter HDR screens.",
   "flashbackexportextras.hdr_paper_white": "Paper White (nits)",
-  "flashbackexportextras.hdr_paper_white_tooltip": "SDR reference white level. Diffuse white in the scene\nmaps to this brightness. Default: 203 nits."
+  "flashbackexportextras.hdr_paper_white_tooltip": "SDR reference white level. Diffuse white in the scene\nmaps to this brightness. Default: 203 nits.",
+  "flashbackexportextras.exr_audio": "Bake frame-aligned audio (WAV)",
+  "flashbackexportextras.exr_audio_tooltip": "Mixes the selected recorded tracks into one WAV, or uses Flashback's positional audio. Place audio.wav at EXR frame 0.",
+  "flashbackexportextras.exr_mist": "Mist pass",
+  "flashbackexportextras.exr_mist_distance": "Mist end (blocks)",
+  "flashbackexportextras.exr_normal": "Geometric Normal pass",
+  "flashbackexportextras.exr_normal_tooltip": "Blender-world geometric normals reconstructed from visible depth. Shader bump and normal maps are excluded.",
+  "flashbackexportextras.prores_alpha": "Use ProRes 4444 with alpha (MOV)",
+  "flashbackexportextras.prores_alpha_tooltip": "Selects MOV and ProRes and turns off the replay sky for a transparent background."
 }

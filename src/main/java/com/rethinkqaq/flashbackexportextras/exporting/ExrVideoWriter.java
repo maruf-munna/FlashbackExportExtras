@@ -64,6 +64,12 @@ public class ExrVideoWriter implements VideoWriter {
     private final boolean translucentLayer;
     // the HUD as its own layer: each frame also waits for its HUD readback
     private final boolean hudLayer;
+    private final Path outputDir;
+    private final boolean exportAudio;
+    private final double fps;
+    private final int audioChannels;
+    private ExrWaveWriter wave;
+    private long audioFrameCount;
     private final int width;
     private final int height;
     private volatile boolean accepting = true;
@@ -79,6 +85,16 @@ public class ExrVideoWriter implements VideoWriter {
     public ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,
                           ExrCompression compression, boolean translucentLayer, boolean hudLayer,
                           int depthBits) throws IOException {
+        this(outputDir, width, height, sceneLinearHdr, compression, translucentLayer, hudLayer, depthBits, false, 0, false);
+    }
+
+    public ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,
+                          ExrCompression compression, boolean translucentLayer, boolean hudLayer,
+                          int depthBits, boolean exportAudio, double fps, boolean stereoAudio) throws IOException {
+        this.outputDir = outputDir;
+        this.exportAudio = exportAudio;
+        this.fps = fps;
+        this.audioChannels = stereoAudio ? 2 : 1;
         this.sceneLinearHdr = sceneLinearHdr;
         this.translucentLayer = translucentLayer;
         this.hudLayer = hudLayer;
@@ -90,7 +106,10 @@ public class ExrVideoWriter implements VideoWriter {
                 exrWriters[i] = new MultiLayerExrWriter(outputDir, width, height,
                         FlashbackExportExtrasConfig.INSTANCE.depthLinearizeWorldSpace, sceneLinearHdr,
                         compression, translucentLayer, this.hudLayer, depthBits,
-                        FlashbackExportExtrasConfig.INSTANCE.exrExportDepth);
+                        FlashbackExportExtrasConfig.INSTANCE.exrExportDepth,
+                        FlashbackExportExtrasConfig.INSTANCE.exrExportMist
+                                ? Math.max(1, FlashbackExportExtrasConfig.INSTANCE.exrMistDistance) : 0,
+                        FlashbackExportExtrasConfig.INSTANCE.exrExportNormal);
             }
         } catch (IOException | RuntimeException e) {
             for (MultiLayerExrWriter writer : exrWriters) {
@@ -130,6 +149,17 @@ public class ExrVideoWriter implements VideoWriter {
     }
     //?}
 
+    public boolean exportsAudio() {
+        return exportAudio;
+    }
+
+    private void captureAudio(FloatBuffer buffer) throws IOException {
+        if (!exportAudio || FlashPlusAudioBridge.hasRecordedTracks()) return;
+        if (wave == null) wave = new ExrWaveWriter(outputDir.resolve("audio.wav"), audioChannels);
+        ++audioFrameCount;
+        wave.writeFrame(buffer, Math.round(audioFrameCount * ExrWaveWriter.SAMPLE_RATE / fps));
+    }
+
     private void encodeNative(NativeImage colorImage, FloatBuffer audioBuffer) {
         if (!accepting) {
             colorImage.close();
@@ -141,6 +171,12 @@ public class ExrVideoWriter implements VideoWriter {
             throw new IllegalStateException("EXR writer has failed", failure);
         }
 
+        try {
+            captureAudio(audioBuffer);
+        } catch (IOException e) {
+            colorImage.close();
+            throw new java.io.UncheckedIOException("EXR audio capture failed", e);
+        }
         pendingColors.addLast(colorImage);
         drainPairs();
     }
@@ -307,15 +343,44 @@ public class ExrVideoWriter implements VideoWriter {
     /*public void finish(Consumer<String> statusConsumer) {
     *//*?} else {*/
     public void finish() {
+        Consumer<String> statusConsumer = ignored -> { };
     /*?}*/
         // EXR uses the main Flashback export progress. Do not emit a second
         // progress phase for the camera path or the EXR writer queue.
-        finishInternal();
+        if (finished) return;
+        try {
+            finishInternal();
+            if (!exportAudio || encodedFrameCount == 0) return;
+            if (FlashPlusAudioBridge.finish(outputDir.resolve("audio.wav"), encodedFrameCount, statusConsumer)) return;
+            if (wave == null || audioFrameCount != encodedFrameCount) {
+                throw new IllegalStateException("Missing PCM audio for EXR sequence");
+            }
+            wave.publish(Math.round(encodedFrameCount * ExrWaveWriter.SAMPLE_RATE / fps));
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException("Could not finish EXR audio", e);
+        } finally {
+            closeWave();
+        }
     }
 
     @Override
     public void close() {
-        finishInternal();
+        try {
+            finishInternal();
+        } finally {
+            closeWave();
+        }
+    }
+
+    private void closeWave() {
+        if (wave == null) return;
+        try {
+            wave.close();
+        } catch (IOException e) {
+            FlashbackExportExtras.LOGGER.warn("Could not clean up EXR audio staging file", e);
+        } finally {
+            wave = null;
+        }
     }
 
     private static final class FramePacket {

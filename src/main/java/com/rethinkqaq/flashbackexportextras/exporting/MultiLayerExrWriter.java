@@ -54,7 +54,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
     private static final float INV_255 = 1.0f / 255.0f;
     // header strings: camera of the frame (Minecraft world space, degrees), shown in Blender's Metadata panel
     private static final String[] CAMERA_ATTRIBUTES = {
-        "mc.frame", "mc.camera.position", "mc.camera.rotation", "mc.camera.fov", "mc.channels"
+        "mc.frame", "mc.camera.position", "mc.camera.rotation", "mc.camera.fov", "mc.channels", "mc.depth.encoding"
     };
 
     // ReplayMod-proven order: A, B, G, R (matches BGRA pixel data layout); alphabetical as OpenEXR wants it.
@@ -73,11 +73,16 @@ public class MultiLayerExrWriter implements AutoCloseable {
         "View Layer.UI.A",
         "View Layer.UI.B",
         "View Layer.UI.G",
-        "View Layer.UI.R"
+        "View Layer.UI.R",
+        "View Layer.Mist.Z",
+        "View Layer.Normal.X",
+        "View Layer.Normal.Y",
+        "View Layer.Normal.Z"
     };
 
     private final int numChannels;
     private final boolean exportDepth;
+    private final ExrGeometryPasses geometry;
     private final int[] channelIndices;
     private final boolean translucentLayer;
     // HUD as its own premultiplied layer (UI), with Export Transparent when the export draws a HUD
@@ -133,6 +138,14 @@ public class MultiLayerExrWriter implements AutoCloseable {
                                boolean sceneLinearHdr, ExrCompression compression,
                                boolean translucentLayer, boolean hudLayer, int depthBits,
                                boolean exportDepth) throws IOException {
+        this(outputDir, width, height, linearizeDepth, sceneLinearHdr, compression,
+                translucentLayer, hudLayer, depthBits, exportDepth, 0, false);
+    }
+
+    public MultiLayerExrWriter(Path outputDir, int width, int height, boolean linearizeDepth,
+                               boolean sceneLinearHdr, ExrCompression compression,
+                               boolean translucentLayer, boolean hudLayer, int depthBits,
+                               boolean exportDepth, int mistDistance, boolean exportNormal) throws IOException {
         this.translucentLayer = translucentLayer;
         this.hudLayer = hudLayer;
         this.exportDepth = exportDepth;
@@ -140,7 +153,10 @@ public class MultiLayerExrWriter implements AutoCloseable {
                 .filter(i -> (i < 4 || i == 4 && exportDepth
                         || i >= 5 && i <= 8 && translucentLayer
                         || i == 9 && translucentLayer && exportDepth
-                        || i >= 10 && hudLayer)).toArray();
+                        || i >= 10 && i <= 13 && hudLayer
+                        || i == 14 && mistDistance > 0 || i >= 15 && exportNormal))
+                .boxed().sorted(java.util.Comparator.comparing(i -> CHANNEL_NAMES[i]))
+                .mapToInt(Integer::intValue).toArray();
         this.depthBits = Math.max(10, Math.min(23, depthBits));
         this.numChannels = channelIndices.length;
         final int NUM_CHANNELS = numChannels;
@@ -158,13 +174,14 @@ public class MultiLayerExrWriter implements AutoCloseable {
         Files.createDirectories(outputDir);
 
         int pixelCount = width * height;
+        this.geometry = new ExrGeometryPasses(width, height, mistDistance, exportNormal);
 
         // --- Pre-allocate pixel buffers (5 × width × height × 4 bytes) ---
         this.rBuf = MemoryUtil.memAllocFloat(pixelCount);
         this.gBuf = MemoryUtil.memAllocFloat(pixelCount);
         this.bBuf = MemoryUtil.memAllocFloat(pixelCount);
         this.aBuf = MemoryUtil.memAllocFloat(pixelCount);
-        this.zBuf = MemoryUtil.memAllocFloat(pixelCount);
+        this.zBuf = exportDepth ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.trBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.tgBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
         this.tbBuf = translucentLayer ? MemoryUtil.memAllocFloat(pixelCount) : null;
@@ -192,7 +209,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
             channelInfo.get(i).name(nameBuf);
             pixelTypes.put(i, TinyEXR.TINYEXR_PIXELTYPE_FLOAT);
             // RGBA → HALF output; Depth → FLOAT output (ReplayMod pattern)
-            boolean depthChannel = CHANNEL_NAMES[channelIndices[i]].endsWith(".Z");
+            boolean depthChannel = channelIndices[i] == 4 || channelIndices[i] == 9;
             requestedTypes.put(i, depthChannel ? TinyEXR.TINYEXR_PIXELTYPE_FLOAT : TinyEXR.TINYEXR_PIXELTYPE_HALF);
         }
         pixelTypes.clear();
@@ -200,7 +217,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
 
         // Build a dense pointer table for exactly the channels in this header. Never leave native pointers unset.
         FloatBuffer[] channelBuffers = {aBuf, bBuf, gBuf, rBuf, zBuf,
-                taBuf, tbBuf, tgBuf, trBuf, tzBuf, uaBuf, ubBuf, ugBuf, urBuf};
+                taBuf, tbBuf, tgBuf, trBuf, tzBuf, uaBuf, ubBuf, ugBuf, urBuf, geometry.mist, geometry.nx, geometry.ny, geometry.nz};
         for (int index : channelIndices) {
             FloatBuffer buffer = channelBuffers[index];
             if (buffer == null) throw new IllegalStateException("No pixel buffer for EXR channel " + CHANNEL_NAMES[index]);
@@ -260,6 +277,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
             }
         }
         if (exportDepth) fillDepth(depthFrame);
+        geometry.fill(depthFrame, camera);
         writeExr(frameNumber, camera);
         frameCount++;
     }
@@ -348,6 +366,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
                               TranslucentCaptureState.CameraInfo camera, int frameNumber) throws IOException {
         fillSceneLinearHdrColor(rgba16f);
         if (exportDepth) fillDepth(depthFrame);
+        geometry.fill(depthFrame, camera);
         fillHud(hud);
         if (translucentLayer) clearTranslucent(depthFrame);
         frameSplit = false;
@@ -479,8 +498,8 @@ public class MultiLayerExrWriter implements AutoCloseable {
         header.requested_pixel_types(requestedTypes);
         int attributes = fixedAttributeCount + setFrameAttributes(frameNumber, camera);
         if (attributes > 0) {
-            header.num_custom_attributes(attributes);
             header.custom_attributes(customAttributes);
+            header.num_custom_attributes(attributes);
         }
         header.compression_type(compressionType);
 
@@ -519,14 +538,17 @@ public class MultiLayerExrWriter implements AutoCloseable {
                 : "Combined (glass baked in: no translucent layer this frame), Depth, Trans (empty), TransDepth")
                 + (hudLayer ? ", UI (HUD, premultiplied)" : "");
         if (!exportDepth) layers = layers.replace(", Depth (solid)", "").replace(", Depth", "").replace(", TransDepth", "");
+        if (geometry.mist != null) layers += ", Mist (0 to " + geometry.mistDistance + " blocks)";
+        if (geometry.nx != null) layers += ", Normal (geometric, Blender world space)";
+        String depthEncoding = exportDepth ? (linearizeDepth ? "linear_blocks" : "ndc") : null;
         String[] values = camera == null
-                ? new String[] {Integer.toString(frameNumber), null, null, null, layers}
+                ? new String[] {Integer.toString(frameNumber), null, null, null, layers, depthEncoding}
                 : new String[] {
                         Integer.toString(frameNumber),
                         String.format(java.util.Locale.ROOT, "%.6f %.6f %.6f", camera.x(), camera.y(), camera.z()),
                         String.format(java.util.Locale.ROOT, "%.4f %.4f", camera.yaw(), camera.pitch()),
                         String.format(java.util.Locale.ROOT, "%.4f", camera.fov()),
-                        layers};
+                        layers, depthEncoding};
         int count = 0;
         for (int i = 0; i < CAMERA_ATTRIBUTES.length; i++) {
             if (values[i] == null) {
@@ -564,6 +586,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
         MemoryUtil.memFree(bBuf);
         MemoryUtil.memFree(aBuf);
         MemoryUtil.memFree(zBuf);
+        geometry.close();
         for (FloatBuffer b : new FloatBuffer[] {trBuf, tgBuf, tbBuf, taBuf, tzBuf, urBuf, ugBuf, ubBuf, uaBuf}) {
             if (b != null) MemoryUtil.memFree(b);
         }
