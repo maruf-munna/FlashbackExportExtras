@@ -75,6 +75,7 @@ public class MixinExportJob implements ExrAudioOutput {
     @Unique private Path sidecarDestination;
     @Unique private ExrVideoWriter sidecarWriter;
     @Unique private Render3dOptions render3d;
+    @Unique private int sidecarUi;
     @Unique private ExportMode exportMode;
     @Unique private boolean exrAudio;
 
@@ -270,7 +271,7 @@ public class MixinExportJob implements ExrAudioOutput {
         /*com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.reset();
         *///?}
         TranslucentCaptureState.active = isExrTranslucentLayer;
-        TranslucentCaptureState.hudActive = isExrHudLayer;
+        TranslucentCaptureState.hudActive = isExrHudLayer || (sidecarUi & 1) != 0;
         /*? if hdr {*/
         HdrVideoCaptureState.reset();
         flashbackexportextras_hdrCaptureFrameCount = 0L;
@@ -290,7 +291,7 @@ public class MixinExportJob implements ExrAudioOutput {
             try {
                 sidecarStaging = Files.createTempDirectory(sidecarDestination.getParent(), ".3d-render-");
                 sidecarWriter = ExrVideoWriter.dataSidecar(sidecarStaging, self.getWidth(), self.getHeight(),
-                        render3d.linearize(), render3d.compression(), isExrTranslucentLayer, render3d.depthBits(),
+                        render3d.linearize(), render3d.compression(), isExrTranslucentLayer, sidecarUi != 0, render3d.depthBits(),
                         render3d.depth(), render3d.mistDistance(), render3d.normal(),
                         render3d.wave() && settings.recordAudio(), settings.framerate(), settings.stereoAudio());
             } catch (IOException e) {
@@ -357,10 +358,13 @@ public class MixinExportJob implements ExrAudioOutput {
         }
         flashbackexportextras$captureHdrBeforeDownload(target);
         //? if >=26.3 {
-        /*if (isExrHudLayer) {
+        /*if (TranslucentCaptureState.hudActive) {
             // the frame's HUD (or an empty layer when none was drawn)
             com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.finishFrame(
                     DepthCaptureState.submittedCaptureFrameId());
+        } else if (sidecarUi != 0) {
+            TranslucentCaptureState.submitHud(new TranslucentCaptureState.HudFrame(
+                    DepthCaptureState.submittedCaptureFrameId(), null));
         }
         *///?}
         if (isExrMode || render3d != null) {
@@ -438,7 +442,7 @@ public class MixinExportJob implements ExrAudioOutput {
         /*if (isExrTranslucentLayer) {
             com.rethinkqaq.flashbackexportextras.gpu.TranslucentExportCapture.INSTANCE.flush();
         }
-        if (isExrHudLayer) {
+        if (TranslucentCaptureState.hudActive) {
             com.rethinkqaq.flashbackexportextras.gpu.HudExportCapture.INSTANCE.flush();
         }
         *///?}
@@ -521,6 +525,8 @@ public class MixinExportJob implements ExrAudioOutput {
                                                 SaveableFramebufferQueue downloader) {
         boolean completed = false;
         try {
+            sidecarUi = FlashPlusUiBridge.set3dUiRouting(render3d != null && !settings.noGui()
+                    && FlashbackExportExtras.TRANSLUCENT_LAYER_SUPPORTED);
             doExport(videoWriter, downloader);
             if (sidecarWriter != null) {
                 sidecarWriter.finishSequence(ignored -> { });
@@ -539,6 +545,8 @@ public class MixinExportJob implements ExrAudioOutput {
             try {
                 flashbackexportextras$finishExportSession(completed);
             } finally {
+                FlashPlusUiBridge.set3dUiRouting(false);
+                sidecarUi = 0;
                 if (!completed) flashbackexportextras$discardSidecar();
             }
         }

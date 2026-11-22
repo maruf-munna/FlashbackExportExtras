@@ -10,6 +10,7 @@ public final class FlashPlusUiBridge {
     private static final String EXPORT_CLASS = "redsmods.flashplus.scene.ScenePerspectiveExport";
     private static Method separateUiMethod;
     private static Method blendUiMethod;
+    private static Method split3dUiMethod;
     private static boolean lookedUp;
     private static boolean warned;
 
@@ -22,6 +23,18 @@ public final class FlashPlusUiBridge {
             separateUiMethod.invoke(null, enabled);
         } catch (ReflectiveOperationException e) {
             warn(e);
+        }
+    }
+
+    /** Bit 1 requests a separate HUD and bit 2 requests a separate cursor. */
+    public static synchronized int set3dUiRouting(boolean enabled) {
+        lookup();
+        if (split3dUiMethod == null) return 0;
+        try {
+            return (Integer) split3dUiMethod.invoke(null, enabled);
+        } catch (ReflectiveOperationException e) {
+            warn(e);
+            return 0;
         }
     }
 
@@ -42,6 +55,7 @@ public final class FlashPlusUiBridge {
             Class<?> owner = Class.forName(EXPORT_CLASS);
             separateUiMethod = owner.getMethod("setSeparateUiOutput", boolean.class);
             blendUiMethod = owner.getMethod("blendNextExrUiFrame", long.class, int.class, int.class);
+            split3dUiMethod = owner.getMethod("set3dUiRouting", boolean.class);
         } catch (ReflectiveOperationException | LinkageError ignored) {
             // FlashPlus is optional; ordinary EXR HUD layers remain independent.
         }

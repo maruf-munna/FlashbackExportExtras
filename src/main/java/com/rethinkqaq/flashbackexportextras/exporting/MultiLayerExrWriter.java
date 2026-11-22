@@ -561,6 +561,7 @@ public class MultiLayerExrWriter implements AutoCloseable {
             if (translucentLayer && exportDepth) dataLayers.add(frameSplit ? "TransDepth" : "TransDepth (empty)");
             if (geometry.mist != null) dataLayers.add("Mist (0 to " + geometry.mistDistance + " blocks)");
             if (geometry.nx != null) dataLayers.add("Normal (geometric, Blender world space)");
+            if (hudLayer) dataLayers.add("UI (premultiplied)");
             layers = String.join(", ", dataLayers);
         }
         String depthEncoding = exportDepth ? (linearizeDepth ? "linear_blocks" : "ndc") : null;

@@ -100,10 +100,10 @@ public class ExrVideoWriter implements VideoWriter {
     }
 
     public static ExrVideoWriter dataSidecar(Path outputDir, int width, int height, boolean linearize,
-            ExrCompression compression, boolean translucentDepth, int depthBits, boolean depth,
+            ExrCompression compression, boolean translucentDepth, boolean hudLayer, int depthBits, boolean depth,
             int mistDistance, boolean normal, boolean audio, double fps, boolean stereo) throws IOException {
         return new ExrVideoWriter(outputDir, width, height, false, compression, translucentDepth,
-                false, depthBits, audio, fps, stereo, true, linearize, depth, mistDistance, normal);
+                hudLayer, depthBits, audio, fps, stereo, true, linearize, depth, mistDistance, normal);
     }
 
     private ExrVideoWriter(Path outputDir, int width, int height, boolean sceneLinearHdr,

@@ -30,6 +30,9 @@ It writes the video and a sibling `<video name>_exr` folder with frame-matched d
 color footage and start the EXR sequence on the same frame as the video. The first EXR is `0000.exr`. With SSAA enabled, the
 EXR data retains the render resolution. Perspective projection is required.
 
+With FlashPlus and **No GUI** off, uncheck **Bake recorded HUD** or **Bake recorded cursor** to route that item to the
+EXR `UI` layer. In Blender, use Alpha Over to add `UI` above the finished depth composite.
+
 ## Build and deploy to an instance
 
 Set `minecraft_instance_dir` in `versions/<version>/gradle.properties` to the root folder of your Minecraft or Modrinth instance. Quotes around a path with spaces are optional. The task creates the instance's `mods` folder if needed, removes only older jars of this mod, and copies in the freshly remapped jar.
